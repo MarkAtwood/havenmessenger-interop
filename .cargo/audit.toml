@@ -63,4 +63,11 @@ ignore = [
     "RUSTSEC-2026-0207",
     "RUSTSEC-2026-0208",
     "RUSTSEC-2026-0212",
+    # RUSTSEC-2026-0330 / RUSTSEC-2026-0331 - `libcrux-kem` 0.0.7: panics on a short hybrid seed or key.
+    # NON-ACTIVATED LOCKFILE PHANTOM, the same shape as RUSTSEC-2026-0124. It resolves into Cargo.lock only
+    # through `hpke-rs-libcrux` 0.6.1, the optional libcrux hpke-rs backend, which is not enabled: `cargo tree
+    # -i libcrux-kem` prints nothing under default / --all-features / --target all, so it is never compiled
+    # or linked. Re-evaluate if the libcrux hpke-rs backend is ever activated.
+    "RUSTSEC-2026-0330",
+    "RUSTSEC-2026-0331",
 ]
