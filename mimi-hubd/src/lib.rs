@@ -28,6 +28,7 @@ pub mod http;
 pub mod notify_source;
 pub mod peer;
 pub mod store;
+mod store_canonical;
 pub mod tls;
 
 use mimi_core::commit_wire::{
@@ -507,6 +508,7 @@ impl Provider {
     pub fn fanout_targets(&self, room_uri: &str, exclude: &str) -> anyhow::Result<FanoutPlan> {
         self.assert_hub_of_record(room_uri)?;
         let mut plan = FanoutPlan::default();
+        let exclude = mimi_core::uri::canonical(exclude);
         for (member, authority) in self.store.list_participants(room_uri)? {
             if member == exclude {
                 continue;
@@ -767,7 +769,7 @@ impl Provider {
             .store
             .list_participants(room_uri)?
             .iter()
-            .any(|(member, _authority)| member == sending_uri);
+            .any(|(member, _authority)| *member == mimi_core::uri::canonical(sending_uri));
         if !is_active {
             anyhow::bail!(
                 "sendingUri {sending_uri} is not an active participant of {room_uri} (M2/R3 reject)"
@@ -968,9 +970,15 @@ impl Provider {
         for change in &commit.updates {
             match change.proposal_type {
                 MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE => {
-                    participants = Some(decode_participant_list_update(&change.payload).map_err(
-                        |_| UpdateRefusal::Invalid("the participant list update is malformed"),
-                    )?);
+                    let mut update =
+                        decode_participant_list_update(&change.payload).map_err(|_| {
+                            UpdateRefusal::Invalid("the participant list update is malformed")
+                        })?;
+                    // Users are named in one form, so a differently spelled URI is the same user.
+                    for added in &mut update.added_participants {
+                        added.user_uri = mimi_core::uri::canonical(&added.user_uri);
+                    }
+                    participants = Some(update);
                 }
                 MIMI_ROLES_LIST_PROPOSAL_TYPE => {
                     roles = Some(
@@ -1057,8 +1065,14 @@ impl Provider {
             .store
             .list_participant_rows(room_uri)
             .map_err(|_| UpdateRefusal::Store)?;
+        // Stored URIs and a decoded update's are canonical; an Add's identity is compared in the same form.
+        let canonical_identity = |identity: &[u8]| {
+            std::str::from_utf8(identity)
+                .ok()
+                .map(mimi_core::uri::canonical)
+        };
         let named = |identity: &[u8]| -> bool {
-            std::str::from_utf8(identity).is_ok_and(|uri| {
+            canonical_identity(identity).is_some_and(|uri| {
                 rows.iter().any(|row| row.member_uri == uri)
                     || update
                         .added_participants
@@ -1070,11 +1084,9 @@ impl Provider {
             return Err(MISMATCH);
         }
         for added in &update.added_participants {
-            if !commit
-                .adds
-                .iter()
-                .any(|add| add.identity == added.user_uri.as_bytes())
-            {
+            if !commit.adds.iter().any(|add| {
+                canonical_identity(&add.identity).is_some_and(|uri| uri == added.user_uri)
+            }) {
                 return Err(MISMATCH);
             }
         }

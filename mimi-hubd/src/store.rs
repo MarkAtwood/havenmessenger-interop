@@ -249,6 +249,15 @@ impl SqliteStore {
             }
         }
         conn.execute("UPDATE room_participants SET seq = rowid WHERE seq = 0", [])?;
+        let report = crate::store_canonical::canonicalize_stored_uris(&conn)?;
+        if report.rewritten > 0 || !report.left.is_empty() {
+            eprintln!(
+                "[mimi-hubd] store: {} stored URI(s) rewritten to their canonical form; {} left as they were (already stored canonically): {:?}",
+                report.rewritten,
+                report.left.len(),
+                report.left
+            );
+        }
         Ok(Self { conn })
     }
 
@@ -260,6 +269,8 @@ impl SqliteStore {
         kp_bytes: &[u8],
         not_after: u64,
     ) -> anyhow::Result<()> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         self.conn.execute(
             "INSERT INTO keypackages (username, kp_bytes, not_after) VALUES (?1, ?2, ?3)",
             params![username, kp_bytes, not_after as i64],
@@ -296,6 +307,8 @@ impl SqliteStore {
         username: &str,
         now_unix: u64,
     ) -> anyhow::Result<Option<Vec<u8>>> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         let row = self
             .conn
             .query_row(
@@ -319,6 +332,8 @@ impl SqliteStore {
         now_unix: u64,
         meets: impl Fn(&[u8]) -> bool,
     ) -> anyhow::Result<KeyClaim> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         let tx = self.conn.unchecked_transaction()?;
         let rows: Vec<(i64, Vec<u8>)> = {
             let mut stmt = tx.prepare(
@@ -382,6 +397,8 @@ impl SqliteStore {
         username: &str,
         not_after: u64,
     ) -> anyhow::Result<()> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         self.conn.execute(
             "INSERT OR REPLACE INTO kpref_client (kpref, username, not_after) VALUES (?1, ?2, ?3)",
             params![kpref, username, not_after as i64],
@@ -451,6 +468,12 @@ impl SqliteStore {
         state: &str,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let requester = mimi_core::uri::canonical(requester);
+        let requester = requester.as_str();
+        let target = mimi_core::uri::canonical(target);
+        let target = target.as_str();
+        let room_key = mimi_core::uri::canonical(room_key);
+        let room_key = room_key.as_str();
         // Only bound on a NEW (requester,target,room_key) row; updates to existing rows are free.
         let exists: bool = self
             .conn
@@ -484,6 +507,12 @@ impl SqliteStore {
         target: &str,
         room_key: &str,
     ) -> anyhow::Result<bool> {
+        let requester = mimi_core::uri::canonical(requester);
+        let requester = requester.as_str();
+        let target = mimi_core::uri::canonical(target);
+        let target = target.as_str();
+        let room_key = mimi_core::uri::canonical(room_key);
+        let room_key = room_key.as_str();
         let n = self.conn.execute(
             "DELETE FROM consent WHERE requester=?1 AND target=?2 AND room_key=?3",
             params![requester, target, room_key],
@@ -499,6 +528,12 @@ impl SqliteStore {
         target: &str,
         room_key: &str,
     ) -> anyhow::Result<bool> {
+        let requester = mimi_core::uri::canonical(requester);
+        let requester = requester.as_str();
+        let target = mimi_core::uri::canonical(target);
+        let target = target.as_str();
+        let room_key = mimi_core::uri::canonical(room_key);
+        let room_key = room_key.as_str();
         let n = self.conn.execute(
             "DELETE FROM consent WHERE requester=?1 AND target=?2 AND room_key=?3 AND state='requested'",
             params![requester, target, room_key],
@@ -513,6 +548,12 @@ impl SqliteStore {
         target: &str,
         room_key: &str,
     ) -> anyhow::Result<Option<String>> {
+        let requester = mimi_core::uri::canonical(requester);
+        let requester = requester.as_str();
+        let target = mimi_core::uri::canonical(target);
+        let target = target.as_str();
+        let room_key = mimi_core::uri::canonical(room_key);
+        let room_key = room_key.as_str();
         Ok(self
             .conn
             .query_row(
@@ -538,6 +579,12 @@ impl SqliteStore {
         note: &str,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let reporting_user = mimi_core::uri::canonical(reporting_user);
+        let reporting_user = reporting_user.as_str();
+        let alleged_abuser_uri = mimi_core::uri::canonical(alleged_abuser_uri);
+        let alleged_abuser_uri = alleged_abuser_uri.as_str();
         let n: i64 = self
             .conn
             .query_row("SELECT COUNT(*) FROM abuse_reports", [], |r| r.get(0))?;
@@ -561,6 +608,8 @@ impl SqliteStore {
 
     /// Count of persisted abuse reports for a room (test/inspection helper).
     pub fn abuse_report_count(&self, room_uri: &str) -> anyhow::Result<i64> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         Ok(self.conn.query_row(
             "SELECT COUNT(*) FROM abuse_reports WHERE room_uri=?1",
             params![room_uri],
@@ -577,6 +626,8 @@ impl SqliteStore {
         policy_json: &str,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         self.conn.execute(
             "INSERT INTO room_policy (room_uri, policy_json, ts) VALUES (?1,?2,?3) \
              ON CONFLICT(room_uri) DO UPDATE SET policy_json=excluded.policy_json, ts=excluded.ts",
@@ -587,6 +638,8 @@ impl SqliteStore {
 
     /// The room's policy JSON, or None (default-permissive, no policy set).
     pub fn room_policy_json(&self, room_uri: &str) -> anyhow::Result<Option<String>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         Ok(self
             .conn
             .query_row(
@@ -604,6 +657,10 @@ impl SqliteStore {
         member_uri: &str,
         role_index: u32,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         Self::set_member_role_on(&self.conn, room_uri, member_uri, role_index)
     }
 
@@ -616,6 +673,10 @@ impl SqliteStore {
         member_uri: &str,
         role_index: u32,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         conn.execute(
             "INSERT INTO member_role (room_uri, member_uri, role_index) VALUES (?1,?2,?3) \
              ON CONFLICT(room_uri, member_uri) DO UPDATE SET role_index=excluded.role_index",
@@ -626,6 +687,10 @@ impl SqliteStore {
 
     /// A member's role_index in a room, or None if unassigned.
     pub fn member_role(&self, room_uri: &str, member_uri: &str) -> anyhow::Result<Option<u32>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         Ok(self
             .conn
             .query_row(
@@ -640,6 +705,8 @@ impl SqliteStore {
     // ---- enrollment (the opt-in) ----
 
     pub fn enroll(&self, username: &str) -> anyhow::Result<()> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         self.conn.execute(
             "INSERT OR IGNORE INTO enrolled (username) VALUES (?1)",
             params![username],
@@ -648,6 +715,8 @@ impl SqliteStore {
     }
 
     pub fn is_enrolled(&self, username: &str) -> anyhow::Result<bool> {
+        let username = mimi_core::uri::canonical(username);
+        let username = username.as_str();
         let found: Option<i64> = self
             .conn
             .query_row(
@@ -671,6 +740,8 @@ impl SqliteStore {
         cap: i64,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         if recipient.is_empty() || recipient.len() > RECIPIENT_MAX_LEN {
             anyhow::bail!("recipient must be 1..={RECIPIENT_MAX_LEN} bytes");
         }
@@ -694,6 +765,8 @@ impl SqliteStore {
 
     /// Fetch+delete the oldest queued item for `recipient` (deliver-once, FIFO). None when empty.
     fn dequeue(&self, table: &str, recipient: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         let row = self
             .conn
             .query_row(
@@ -715,9 +788,13 @@ impl SqliteStore {
         bytes: &[u8],
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         self.enqueue("welcomes", recipient, bytes, MAX_QUEUE_WELCOMES, now_unix)
     }
     pub fn fetch_welcome(&self, recipient: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         self.dequeue("welcomes", recipient)
     }
     pub fn enqueue_message(
@@ -726,9 +803,13 @@ impl SqliteStore {
         bytes: &[u8],
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         self.enqueue("messages", recipient, bytes, MAX_QUEUE_MESSAGES, now_unix)
     }
     pub fn fetch_message(&self, recipient: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let recipient = mimi_core::uri::canonical(recipient);
+        let recipient = recipient.as_str();
         self.dequeue("messages", recipient)
     }
 
@@ -744,6 +825,10 @@ impl SqliteStore {
         authority: &str,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         Self::add_participant_on(&self.conn, room_uri, member_uri, authority, now_unix)
     }
 
@@ -756,6 +841,10 @@ impl SqliteStore {
         authority: &str,
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         let exists: bool = conn
             .query_row(
                 "SELECT 1 FROM room_participants WHERE room_uri = ?1 AND member_uri = ?2",
@@ -813,6 +902,10 @@ impl SqliteStore {
     /// Remove a participant (R2/R3: a removed member no longer receives fan-out). Returns true if a row
     /// was removed.
     pub fn remove_participant(&self, room_uri: &str, member_uri: &str) -> anyhow::Result<bool> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         Self::remove_participant_on(&self.conn, room_uri, member_uri)
     }
 
@@ -823,6 +916,10 @@ impl SqliteStore {
         room_uri: &str,
         member_uri: &str,
     ) -> anyhow::Result<bool> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let member_uri = mimi_core::uri::canonical(member_uri);
+        let member_uri = member_uri.as_str();
         let n = conn.execute(
             "DELETE FROM room_participants WHERE room_uri = ?1 AND member_uri = ?2",
             params![room_uri, member_uri],
@@ -833,6 +930,8 @@ impl SqliteStore {
     /// All participants of a room as (member_uri, authority), in the order of the room's participants
     /// vector (protocol §7.5): the order they joined in, with a removal closing the gap.
     pub fn list_participants(&self, room_uri: &str) -> anyhow::Result<Vec<(String, String)>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         Ok(self
             .list_participant_rows(room_uri)?
             .into_iter()
@@ -842,6 +941,8 @@ impl SqliteStore {
 
     /// The same list with each participant's assigned role (None where the hub holds none).
     pub fn list_participant_rows(&self, room_uri: &str) -> anyhow::Result<Vec<ParticipantRow>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         let mut stmt = self.conn.prepare(
             "SELECT p.member_uri, p.authority, r.role_index \
              FROM room_participants p \
@@ -871,6 +972,8 @@ impl SqliteStore {
         proposals: &[(Vec<u8>, Vec<u8>)],
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM pending_proposals WHERE room_uri = ?1 AND (epoch <> ?2 OR ts < ?3)",
@@ -910,6 +1013,8 @@ impl SqliteStore {
         epoch: u64,
         now_unix: u64,
     ) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         let mut stmt = self.conn.prepare(
             "SELECT reference, message FROM pending_proposals \
              WHERE room_uri = ?1 AND epoch = ?2 AND ts >= ?3 ORDER BY ts, rowid",
@@ -926,6 +1031,8 @@ impl SqliteStore {
     /// Once a Commit at `epoch` is accepted: drop what the room holds for that epoch and every earlier one, and record
     /// that the room's next Commit is at `epoch + 1`, unless the hub already knows a later one.
     pub fn commit_accepted_at(&self, room_uri: &str, epoch: u64) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM pending_proposals WHERE room_uri = ?1 AND epoch <= ?2",
@@ -944,6 +1051,8 @@ impl SqliteStore {
     /// The epoch the room's next Commit is sent in, as the hub last learned it from a Commit it accepted; `None` before
     /// the hub has accepted one for the room.
     pub fn room_epoch(&self, room_uri: &str) -> anyhow::Result<Option<u64>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
         Ok(self
             .conn
             .query_row(
@@ -971,6 +1080,16 @@ impl SqliteStore {
         rows: &[ParticipantRow],
         now_unix: u64,
     ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        let room_uri = room_uri.as_str();
+        let rows: Vec<ParticipantRow> = rows
+            .iter()
+            .map(|row| ParticipantRow {
+                member_uri: mimi_core::uri::canonical(&row.member_uri),
+                ..row.clone()
+            })
+            .collect();
+        let rows = rows.as_slice();
         if rows.len() as i64 > MAX_PARTICIPANTS_PER_ROOM {
             anyhow::bail!("participant cap reached for room ({MAX_PARTICIPANTS_PER_ROOM})");
         }

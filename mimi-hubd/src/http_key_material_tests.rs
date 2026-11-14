@@ -95,3 +95,33 @@ async fn a_user_with_no_key_packages_is_still_exhausted() {
         "{answer:?}"
     );
 }
+
+/// A request that spells the target another way (scheme and host case, a percent-encoded letter) is the same user:
+/// the consent grant is found and the KeyPackage served.
+#[tokio::test]
+async fn another_spelling_of_the_target_finds_its_consent() {
+    let (router, p) = app();
+    granted(&p);
+    p.lock()
+        .unwrap()
+        .add_key_package("bob", &real_keypackage(), now_unix() + 100)
+        .unwrap();
+    let request =
+        KeyMaterialRequest::minimal(REQUESTER, "MIMI://HavenMessenger.com/u/%62ob").unwrap();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mimi/pl/keyMaterial/bob")
+                .body(Body::from(request.encode().unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let answer = KeyMaterialResponse::decode(&bytes).unwrap();
+    assert!(
+        matches!(answer, KeyMaterialResponse::Success { .. }),
+        "{answer:?}"
+    );
+}

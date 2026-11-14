@@ -81,8 +81,11 @@ impl MimiUri {
     /// and an entity tag with no following path. A bare provider URI (`mimi://a.example`, optionally a
     /// trailing slash) is accepted with `kind == None`.
     pub fn parse(s: &str) -> Result<Self, UriError> {
+        // The scheme compares without case (RFC 3986 §3.1); the rest of the parse reads the URI as given.
         let rest = s
-            .strip_prefix("mimi://")
+            .get(..7)
+            .filter(|scheme| scheme.eq_ignore_ascii_case("mimi://"))
+            .map(|_| &s[7..])
             .ok_or_else(|| UriError::NotMimiScheme(s.to_string()))?;
         // authority = up to the first '/', the remainder (if any) is the path part.
         let (authority, after) = rest
@@ -133,6 +136,64 @@ impl fmt::Display for MimiUri {
         }
     }
 }
+
+/// The canonical form of a `mimi://` URI (RFC 3986 §6.2.2): the scheme and the authority in lowercase, a percent-encoded
+/// unreserved character (ALPHA, DIGIT, `-`, `.`, `_`, `~`) decoded, and any other percent-encoding's hex digits in
+/// uppercase. The path keeps its case. Two URIs that name the same thing have the same canonical form, so a store keyed by
+/// it finds `MIMI://A.Example/u/%61lice` under `mimi://a.example/u/alice`. Anything that is not a `mimi://` URI (a bare
+/// user name, for one) is returned as given.
+pub fn canonical(s: &str) -> String {
+    let Some(rest) = s
+        .get(..7)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("mimi://"))
+        .map(|_| &s[7..])
+    else {
+        return s.to_string();
+    };
+    let (authority, path) = rest.find('/').map_or((rest, ""), |i| rest.split_at(i));
+    let mut out = String::with_capacity(s.len());
+    out.push_str("mimi://");
+    out.push_str(&normalize_percent(authority).to_ascii_lowercase());
+    out.push_str(&normalize_percent(path));
+    out
+}
+
+/// Decode each percent-encoded unreserved character and uppercase the hex digits of every other percent-encoding. Bytes
+/// outside a percent-encoding are kept as they are, so a path in any script comes through unchanged.
+fn normalize_percent(part: &str) -> String {
+    let bytes = part.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit));
+        match escape {
+            Some(hex) => {
+                let value =
+                    u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("00"), 16).unwrap_or(0);
+                if value.is_ascii_alphanumeric() || matches!(value, b'-' | b'.' | b'_' | b'~') {
+                    out.push(value);
+                } else {
+                    out.push(b'%');
+                    out.extend(hex.iter().map(u8::to_ascii_uppercase));
+                }
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    // Only ASCII was written in place of an escape, so the result is as valid UTF-8 as the input.
+    String::from_utf8(out).unwrap_or_else(|_| part.to_string())
+}
+
+#[cfg(test)]
+#[path = "uri_canonical_tests.rs"]
+mod canonical_tests;
 
 #[cfg(test)]
 mod tests {

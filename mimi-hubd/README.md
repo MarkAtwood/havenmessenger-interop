@@ -313,6 +313,14 @@ diagnostic instead of a silent no-op.
 | POST | `/mimi/v1/addParticipant?room=&member=` | Register a room participant. |
 | POST | `/mimi/v1/authorizeSender?room=&sender=` | Check whether a sender may send in a room. |
 
+### How user and room URIs compare
+
+The hub stores and compares every `mimi://` URI in its canonical form (RFC 3986 §6.2.2, `mimi_core::uri::canonical`):
+the scheme and the host in lowercase, a percent-encoded unreserved character decoded, any other percent-encoding's hex
+digits in uppercase; the path keeps its case. So `MIMI://A.Example/u/%61lice` and `mimi://a.example/u/alice` are the
+same user. A store written before this rewrites its URIs once, at the first open, and logs any row it left because its
+canonical form was already stored.
+
 ## Enrolling a handle for identifierQuery
 
 `identifierQuery` answers 200 only for a handle that opted in, and 404 with no body for every other one
