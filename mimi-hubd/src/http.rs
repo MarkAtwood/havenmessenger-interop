@@ -185,10 +185,10 @@ async fn key_material(State(p): State<SharedProvider>, Query(q): Query<UserQuery
 /// plays the routing-key role the JSON lane's `?user=` plays and is what actually routes the store
 /// lookup (matching the convention already used by [`submit_message_wire`] and the consent wire
 /// twins); the request body's own `targetUser` field is a DIFFERENT thing - a real target URI used
-/// as the consent-gate lookup key (see below), not a routing key. The negotiation fields
-/// (ciphersuites, capabilities, signature) are decoded but not enforced, exactly as documented on
-/// `mimi_core::protocol_wire::KeyMaterialRequest` (the JSON lane enforces none of this either, so
-/// adding enforcement here would be new behavior, not framing).
+/// as the consent-gate lookup key (see below), not a routing key. The KeyPackage served is the oldest whose
+/// ciphersuite is in `acceptableCiphersuites` and whose leaf supports what `requiredCapabilities` names
+/// (`mimi_core::gate::keypackage_meets`); when the user has KeyPackages and none meets the request, the answer is
+/// `noCompatibleMaterial` and none is taken. The request's signature is not verified (DIVERGENCES.md).
 ///
 /// Routes through `Provider::serve_key_material_gated` (the same consent gate `updateConsent`/
 /// `requestConsent` populate) instead of the ungated `serve_key_material` the JSON lane still uses
@@ -216,20 +216,32 @@ async fn key_material_wire(
     log_key_material_identity_claim(&req.requesting_user.0, req.requester_credential_identity());
     let now = now_unix();
     let room_uri = (!req.room_id.0.is_empty()).then_some(req.room_id.0.as_str());
-    let gated = lock(&p).serve_key_material_gated(
+    let gated = lock(&p).serve_key_material_for(
         &req.requesting_user.0,
         &target_user,
         &req.target_user.0,
         room_uri,
         now,
+        |bytes| {
+            mimi_core::gate::keypackage_meets(
+                bytes,
+                &req.acceptable_ciphersuites,
+                &req.required_capabilities,
+            )
+        },
     );
     let outcome = match gated {
-        Ok(Ok(Some(bytes))) => KeyMaterialResponse::Success {
+        Ok(Ok(crate::store::KeyClaim::Claimed(bytes))) => KeyMaterialResponse::Success {
             user_uri: IdentifierUri(target_user),
             key_package: bytes,
         },
-        Ok(Ok(None)) => KeyMaterialResponse::Exhausted {
+        Ok(Ok(crate::store::KeyClaim::NoneStored)) => KeyMaterialResponse::Exhausted {
             user_uri: IdentifierUri(target_user),
+        },
+        // §5.2: the user has key material, and none of it meets the request's ciphersuites or required capabilities.
+        Ok(Ok(crate::store::KeyClaim::NoneCompatible)) => KeyMaterialResponse::Denied {
+            user_uri: IdentifierUri(target_user),
+            code: KeyMaterialUserCode::NoCompatibleMaterial,
         },
         Ok(Err(deny)) => {
             let code = match deny {
@@ -256,6 +268,10 @@ async fn key_material_wire(
         match &outcome {
             KeyMaterialResponse::Success { .. } => "success",
             KeyMaterialResponse::Exhausted { .. } => "exhausted",
+            KeyMaterialResponse::Denied {
+                code: KeyMaterialUserCode::NoCompatibleMaterial,
+                ..
+            } => "noCompatibleMaterial (no KeyPackage meets the request)",
             KeyMaterialResponse::Denied { .. } => "denied (no consent)",
             KeyMaterialResponse::Clients { .. } => "clients",
         }
@@ -952,6 +968,9 @@ mod consent_cancel_tests;
 #[path = "http_wire_tests.rs"]
 mod wire_tests;
 
+#[cfg(test)]
+#[path = "http_key_material_tests.rs"]
+mod key_material_tests;
 #[cfg(test)]
 #[path = "http_notify_tests.rs"]
 mod notify_tests;
@@ -1731,7 +1750,7 @@ mod tests {
     /// Build a real, canonical 0x0001 KeyPackage. Local to this module (mirrors `lib.rs`'s own
     /// `real_keypackage` test helper, which is private to that module's test scope) so this
     /// module's tests can round-trip a KeyMaterialResponse against bytes that actually decode.
-    fn real_keypackage() -> Vec<u8> {
+    pub(super) fn real_keypackage() -> Vec<u8> {
         real_keypackage_for(b"bob")
     }
 

@@ -188,6 +188,43 @@ pub fn mimi_gate_keypackage(key_package_bytes: &[u8]) -> Result<(), GateError> {
     Ok(())
 }
 
+/// Whether a KeyPackage meets what a `KeyMaterialRequest` asks of it (protocol-07 §5.2): its ciphersuite is one of
+/// `acceptable` (any, when the list is empty), and its leaf supports every extension, proposal and credential type
+/// `required` names. RFC 9420 §7.2: the default extension types (1-5) and proposal types (1-7) are supported without
+/// being listed; a credential type is supported only when listed. A KeyPackage that does not decode or validate meets
+/// nothing.
+pub fn keypackage_meets(
+    key_package_bytes: &[u8],
+    acceptable: &[Ciphersuite],
+    required: &RequiredCapabilitiesExtension,
+) -> bool {
+    let Ok((kp_in, consumed)) = deserialize_keypackage_in_no_panic(key_package_bytes) else {
+        return false;
+    };
+    if consumed != key_package_bytes.len() {
+        return false;
+    }
+    let provider = OpenMlsRustCrypto::default();
+    let Ok(key_package) = kp_in.validate(provider.crypto(), ProtocolVersion::Mls10) else {
+        return false;
+    };
+    if !acceptable.is_empty() && !acceptable.contains(&key_package.ciphersuite()) {
+        return false;
+    }
+    let capabilities = key_package.leaf_node().capabilities();
+    let extensions_met = required.extension_types().iter().all(|wanted| {
+        (1..=5).contains(&u16::from(*wanted)) || capabilities.extensions().contains(wanted)
+    });
+    let proposals_met = required.proposal_types().iter().all(|wanted| {
+        (1..=7).contains(&u16::from(*wanted)) || capabilities.proposals().contains(wanted)
+    });
+    let credentials_met = required
+        .credential_types()
+        .iter()
+        .all(|wanted| capabilities.credentials().contains(wanted));
+    extensions_met && proposals_met && credentials_met
+}
+
 /// **K3/K4 routing key - canonical KeyPackageRef.** Compute the MLS `KeyPackageRef` (RFC 9420 §5.2,
 /// `RefHash("MLS 1.0 KeyPackage Reference", KeyPackage)`) for a KeyPackage, via openmls so it is
 /// BYTE-IDENTICAL to the ref a Welcome's `secrets[].new_member` carries. This is the stable handle the
@@ -373,6 +410,9 @@ pub const fn identifier_query(is_mimi_enrolled: bool) -> IdentifierQueryResult {
 #[path = "gate_suite_order_tests.rs"]
 mod suite_order_tests;
 
+#[cfg(test)]
+#[path = "gate_capability_tests.rs"]
+mod capability_tests;
 #[cfg(test)]
 #[path = "gate_grease_tests.rs"]
 mod grease_tests;

@@ -53,6 +53,33 @@ pub(crate) fn key_package(credential: &[u8], suite: u16) -> Vec<u8> {
         .unwrap()
 }
 
+/// A KeyPackage of the pinned suite whose leaf advertises `capabilities`.
+pub(crate) fn key_package_with_capabilities(capabilities: Capabilities) -> Vec<u8> {
+    let provider = OpenMlsRustCrypto::default();
+    let (private_key, public_key) = provider
+        .crypto()
+        .signature_key_gen(SignatureScheme::ED25519)
+        .unwrap();
+    let credential = CredentialWithKey {
+        credential: BasicCredential::new(b"capable".to_vec()).into(),
+        signature_key: SignaturePublicKey::from(public_key),
+    };
+    KeyPackage::builder()
+        .leaf_node_capabilities(capabilities)
+        .key_package_extensions(Extensions::empty())
+        .key_package_lifetime(Lifetime::init(0, u64::MAX))
+        .build(
+            Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519,
+            &provider,
+            &Ed25519Signer { key: private_key },
+            credential,
+        )
+        .unwrap()
+        .key_package()
+        .tls_serialize_detached()
+        .unwrap()
+}
+
 /// A serialized `Capabilities` as a client of the pinned suite would advertise.
 pub(crate) fn capabilities() -> Vec<u8> {
     Capabilities::new(

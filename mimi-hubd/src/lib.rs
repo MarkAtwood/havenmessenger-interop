@@ -682,6 +682,28 @@ impl Provider {
         }
     }
 
+    /// `serve_key_material_gated` for a peer's `KeyMaterialRequest`: the same consent gate, then the oldest KeyPackage
+    /// `meets` accepts (for the wire route, `mimi_core::gate::keypackage_meets` over the request's ciphersuites and
+    /// required capabilities). KeyPackages that don't meet the request are left for another.
+    pub fn serve_key_material_for(
+        &self,
+        requester_uri: &str,
+        target_username: &str,
+        target_uri: &str,
+        room_uri: Option<&str>,
+        now_unix: u64,
+        meets: impl Fn(&[u8]) -> bool,
+    ) -> anyhow::Result<Result<crate::store::KeyClaim, KeyPackageAccess>> {
+        match self.keypackage_access(requester_uri, target_uri, room_uri)? {
+            KeyPackageAccess::Allowed => Ok(Ok(self.store.claim_key_package_meeting(
+                target_username,
+                now_unix,
+                meets,
+            )?)),
+            deny => Ok(Err(deny)),
+        }
+    }
+
     // ---- report abuse (§5.9, DIV-8) ----
 
     /// §5.9: persist a metadata-only abuse report. `alleged_abuser_uri` MUST parse as a MIMI user

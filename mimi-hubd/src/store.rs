@@ -10,6 +10,17 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+/// What claiming a KeyPackage for a request found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyClaim {
+    /// One that meets the request, now taken.
+    Claimed(Vec<u8>),
+    /// The user has none.
+    NoneStored,
+    /// The user has some, and none meets the request; none was taken.
+    NoneCompatible,
+}
+
 pub struct SqliteStore {
     conn: Connection,
 }
@@ -298,6 +309,37 @@ impl SqliteStore {
             )
             .optional()?;
         Ok(row)
+    }
+
+    /// Claim the oldest unexpired KeyPackage of `username` that `meets` accepts, and delete it; the others stay. Says
+    /// whether the user had none at all, or only ones `meets` refused.
+    pub fn claim_key_package_meeting(
+        &self,
+        username: &str,
+        now_unix: u64,
+        meets: impl Fn(&[u8]) -> bool,
+    ) -> anyhow::Result<KeyClaim> {
+        let tx = self.conn.unchecked_transaction()?;
+        let rows: Vec<(i64, Vec<u8>)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, kp_bytes FROM keypackages WHERE username = ?1 AND not_after > ?2 ORDER BY id",
+            )?;
+            let rows = stmt
+                .query_map(params![username, now_unix as i64], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })?
+                .collect::<Result<_, _>>()?;
+            rows
+        };
+        if rows.is_empty() {
+            return Ok(KeyClaim::NoneStored);
+        }
+        let Some((id, bytes)) = rows.into_iter().find(|(_, bytes)| meets(bytes)) else {
+            return Ok(KeyClaim::NoneCompatible);
+        };
+        tx.execute("DELETE FROM keypackages WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(KeyClaim::Claimed(bytes))
     }
 
     // ---- /notify dedup (M5) ----

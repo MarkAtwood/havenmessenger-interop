@@ -822,10 +822,9 @@ fn decode_consent_extensions(window: &[u8]) -> Result<Vec<(u16, Vec<u8>)>, WireE
 /// §5.2 `KeyMaterialRequest`. The negotiation fields (`acceptable_ciphersuites`,
 /// `required_capabilities`, `requester_signature_key`, `requester_credential`,
 /// `key_material_request_signature`) are decoded for wire fidelity (each is a self-delimiting
-/// TLS-PL struct that must be parsed correctly to find the following field's boundary) but not
-/// acted on: the v1 `serve_key_material` this maps onto has no capability negotiation or
-/// signature verification of any kind, on the JSON lane either, so adding enforcement here would
-/// be new behavior, not framing. `room_id` is an empty `IdentifierUri` when the request is not
+/// TLS-PL struct that must be parsed correctly to find the following field's boundary).
+/// `acceptable_ciphersuites` and `required_capabilities` are what `crate::gate::keypackage_meets` checks a KeyPackage
+/// against; the signature fields are not verified. `room_id` is an empty `IdentifierUri` when the request is not
 /// room-scoped (the draft's struct has no `optional<>` wrapper on this field).
 #[derive(Debug, Clone)]
 pub struct KeyMaterialRequest {
