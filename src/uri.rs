@@ -34,6 +34,10 @@ pub enum UriError {
     /// The entity tag was present and recognized, but the path after it was empty.
     #[error("mimi URI entity path is empty: {0:?}")]
     EmptyEntityPath(String),
+    /// The authority has a character outside ASCII. Protocol-07 names a provider by an RFC 3986 host, which is ASCII:
+    /// an internationalized domain is written in A-labels (`xn--`).
+    #[error("mimi URI authority is not ASCII: {0:?}")]
+    NonAsciiAuthority(String),
 }
 
 /// The entity a MIMI URI addresses. The first path segment selects it (`u` / `r` / `d`).
@@ -93,6 +97,9 @@ impl MimiUri {
             .map_or((rest, ""), |i| (&rest[..i], &rest[i + 1..]));
         if authority.is_empty() {
             return Err(UriError::EmptyAuthority(s.to_string()));
+        }
+        if !authority.is_ascii() {
+            return Err(UriError::NonAsciiAuthority(s.to_string()));
         }
         // Bare provider URI: mimi://a.example  or  mimi://a.example/
         if after.is_empty() {

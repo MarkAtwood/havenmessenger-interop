@@ -67,3 +67,20 @@ fn canonical_is_idempotent_and_parse_takes_any_scheme_case() {
     let parsed = MimiUri::parse("MIMI://a.example/u/alice").unwrap();
     assert_eq!(parsed.kind, Some(MimiKind::User));
 }
+
+#[test]
+fn a_host_outside_ascii_is_refused_and_its_a_label_form_is_not() {
+    for uri in [
+        "mimi://例え.jp/u/alice",
+        "mimi://\u{FEFF}/u/alice",
+        "mimi://\u{FFFE}/r/room",
+    ] {
+        assert!(
+            matches!(MimiUri::parse(uri), Err(UriError::NonAsciiAuthority(_))),
+            "{uri}"
+        );
+    }
+    assert!(MimiUri::parse("mimi://xn--r8jz45g.jp/u/alice").is_ok());
+    // The path may hold any script.
+    assert!(MimiUri::parse("mimi://a.example/u/例え").is_ok());
+}
