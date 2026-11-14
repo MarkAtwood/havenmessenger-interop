@@ -225,6 +225,28 @@ pub fn keypackage_meets(
     extensions_met && proposals_met && credentials_met
 }
 
+/// The Welcome at the start of `bytes` (an `MLSMessage`, which may be followed by more, as in a §5.5 `FanoutMessage`'s
+/// tail): its own bytes, and the `KeyPackageRef` of each new member its secrets are for (RFC 9420 §12.4.3.1). A provider
+/// that keeps which KeyPackage it published for which user finds the Welcome's recipients this way.
+pub fn welcome_new_members(bytes: &[u8]) -> Result<(Vec<u8>, Vec<Vec<u8>>), GateError> {
+    let (message, consumed) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut slice = bytes;
+        MlsMessageIn::tls_deserialize(&mut slice)
+            .map(|message| (message, bytes.len() - slice.len()))
+    }))
+    .map_err(|_| GateError::UndecodableMlsMessage("decoder panicked".into()))?
+    .map_err(|e| GateError::UndecodableMlsMessage(format!("{e:?}")))?;
+    let MlsMessageBodyIn::Welcome(welcome) = message.extract() else {
+        return Err(GateError::NotAWelcome);
+    };
+    let members = welcome
+        .secrets()
+        .iter()
+        .map(|secret| secret.new_member().as_slice().to_vec())
+        .collect();
+    Ok((bytes[..consumed].to_vec(), members))
+}
+
 /// **K3/K4 routing key - canonical KeyPackageRef.** Compute the MLS `KeyPackageRef` (RFC 9420 §5.2,
 /// `RefHash("MLS 1.0 KeyPackage Reference", KeyPackage)`) for a KeyPackage, via openmls so it is
 /// BYTE-IDENTICAL to the ref a Welcome's `secrets[].new_member` carries. This is the stable handle the

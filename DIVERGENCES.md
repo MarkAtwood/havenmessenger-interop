@@ -406,6 +406,11 @@ domain in the authority of the room URI. A certificate is valid for a domain whe
 subject alternative name matches it, exactly or by a leftmost wildcard label; the common name is not
 read. The same question gates the JSON-lane `/mimi/v1/notify`, which takes a `room` query for it.
 
+What a `/notify` delivers: a Welcome is queued for each local user whose published KeyPackage it names (this provider
+records each KeyPackage's `KeyPackageRef` when it is published, so the recipient comes from its own map and never from
+the peer). An application message or a Commit for a room this provider does not host is accepted (201) and not stored:
+the provider keeps no membership for a room it does not host, so it cannot say which local users the message is for.
+
 - **What this does not bind.** The check says which names a certificate carries. It does not say
   which names the CA that signed it may issue. Every CA in the client bundle can issue a certificate
   for any provider domain, so trusting a CA means trusting it to name any provider, and a peer with a

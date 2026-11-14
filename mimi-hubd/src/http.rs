@@ -518,7 +518,9 @@ fn accept_notify(p: &SharedProvider, source: &VerifiedNotifySource, body: &[u8])
 /// `FanoutMessage` (an MLS envelope, not garbage) before handing the SAME opaque bytes the JSON lane would receive to
 /// the identical dedup-by-content-hash store call. Rejecting undecodable bodies with 400, rather than treating them as
 /// valid-but-different content the way `submit_notify` treats any other byte string, keeps the wire lane to the
-/// protocol it speaks.
+/// protocol it speaks. A Welcome in the fan-out is queued for each local user whose published KeyPackage it names
+/// (`Provider::deliver_notified_welcome`); application messages and Commits for a room this provider does not host are
+/// accepted and not stored, since it keeps no membership for such a room.
 async fn notify_wire(
     State(p): State<SharedProvider>,
     Path(room_id): Path<String>,
@@ -539,12 +541,30 @@ async fn notify_wire(
             return status;
         }
     };
-    if let Err(error) = mimi_core::protocol_wire::FanoutMessage::decode(&body) {
-        // The decoder's own words: a field of the message and a codec value, never a URI or a user.
-        eprintln!("[mimi-hubd] notify: refused (not a FanoutMessage: {error})");
-        return StatusCode::BAD_REQUEST;
-    }
-    let status = accept_notify(&p, &source, &body);
+    let fanout = match mimi_core::protocol_wire::FanoutMessage::decode(&body) {
+        Ok(fanout) => fanout,
+        Err(error) => {
+            // The decoder's own words: a field of the message and a codec value, never a URI or a user.
+            eprintln!("[mimi-hubd] notify: refused (not a FanoutMessage: {error})");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
+    let g = lock(&p);
+    let status = match g.submit_notify(&source, &body, now_unix()) {
+        Ok(NotifyOutcome::Process) => {
+            // A Welcome for a local user is queued for that user; anything else is accepted and not stored.
+            match g.deliver_notified_welcome(&fanout.message_and_tail, now_unix()) {
+                Ok(0) => {}
+                Ok(queued) => {
+                    eprintln!("[mimi-hubd] notify: Welcome queued for {queued} local user(s)")
+                }
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+            }
+            StatusCode::CREATED
+        }
+        Ok(NotifyOutcome::DuplicateIgnored) => StatusCode::CREATED,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
     eprintln!("[mimi-hubd] notify: {status}");
     status
 }
@@ -974,6 +994,9 @@ mod key_material_tests;
 #[cfg(test)]
 #[path = "http_notify_tests.rs"]
 mod notify_tests;
+#[cfg(test)]
+#[path = "http_notify_welcome_tests.rs"]
+mod notify_welcome_tests;
 #[cfg(test)]
 #[path = "http_publish_tests.rs"]
 mod publish_tests;

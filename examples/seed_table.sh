@@ -12,7 +12,7 @@
 #     either in the path of keyMaterial (a second run adds $COUNT more under each);
 #   - a second user with none, for the exhausted answer;
 #   - a consent grant from each of the two to $PEER_USER;
-#   - a room whose first participant is $PEER_USER.
+#   - a room whose first participant is $PEER_USER, holding role $ROLE.
 # and then runs `check`. Run it against a room name the hub has not seen: the hub appends participants, and no route
 # lists a room, so $PEER_USER is first only in a room that had nobody.
 #
@@ -31,6 +31,8 @@
 #   WITH_KEYS     name of the user that gets KeyPackages (default erin)
 #   WITHOUT_KEYS  name of the user that gets none (default grace)
 #   ROOM          name of the room (default table)
+#   ROLE          the role index the peer user holds in the room (default 2, an ordinary member; 0 and 1 are the
+#                 reserved no-role and banned roles), so a room policy the peer sets later finds it with a role
 #   HANDLE        the handle `check` asks identifierQuery for (default: $WITH_KEYS)
 #   COUNT         KeyPackages published under each of the two keys (default 20; a hub keeps the newest 64 a key)
 #   WORK          directory for the generated files (default: a new temporary one, left in place)
@@ -47,6 +49,7 @@ mode=${1:-}
 WITH_KEYS=${WITH_KEYS:-erin}
 WITHOUT_KEYS=${WITHOUT_KEYS:-grace}
 ROOM=${ROOM:-table}
+ROLE=${ROLE:-2}
 HANDLE=${HANDLE:-$WITH_KEYS}
 COUNT=${COUNT:-20}
 
@@ -137,7 +140,10 @@ seed() {
     status=$(hub -X POST \
         "$HUB/mimi/v1/addParticipant?room=$(urlencode "$room_uri")&member=$(urlencode "$PEER_USER")")
     expect 201 "$status" "adding $PEER_USER to $room_uri"
-    echo "added: $PEER_USER to $room_uri"
+    status=$(hub -X POST \
+        "$HUB/mimi/v1/memberRole?room=$(urlencode "$room_uri")&member=$(urlencode "$PEER_USER")&role=$ROLE")
+    expect 201 "$status" "giving $PEER_USER role $ROLE in $room_uri"
+    echo "added: $PEER_USER to $room_uri, role $ROLE"
 
     # The whole path once, as a peer walks it: the grant lets $PEER_USER claim a KeyPackage on the wire lane.
     answer=$(key_material_answer "$WITH_KEYS" "$with_uri")

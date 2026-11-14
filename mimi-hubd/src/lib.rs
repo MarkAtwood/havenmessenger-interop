@@ -389,6 +389,28 @@ impl Provider {
             .enqueue_welcome(recipient, welcome_bytes, now_unix)
     }
 
+    /// A Welcome that reached this provider in a `notify` (protocol-07 §5.5) from the hub of a room it does not host: it
+    /// is queued for each local user whose KeyPackage it names, found by the `KeyPackageRef` this provider recorded when
+    /// it published that KeyPackage. The recipient comes from this provider's own map, never from the peer. Returns how
+    /// many it queued; a notify that carries no Welcome, or names no KeyPackage of ours, queues nothing.
+    pub fn deliver_notified_welcome(
+        &self,
+        message_and_tail: &[u8],
+        now_unix: u64,
+    ) -> anyhow::Result<usize> {
+        let Ok((welcome, members)) = mimi_core::gate::welcome_new_members(message_and_tail) else {
+            return Ok(0);
+        };
+        let mut queued = 0;
+        for kpref in members {
+            if let Some(user) = self.store.client_for_kpref(&kpref)? {
+                self.relay_welcome(&user, &welcome, now_unix)?;
+                queued += 1;
+            }
+        }
+        Ok(queued)
+    }
+
     pub fn fetch_welcome(&self, recipient: &str) -> anyhow::Result<Option<Vec<u8>>> {
         self.store.fetch_welcome(recipient)
     }
