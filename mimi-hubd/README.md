@@ -299,7 +299,7 @@ diagnostic instead of a silent no-op.
 |---|---|---|
 | GET | `/.well-known/mimi-protocol-directory` | Advertises supported ciphersuite, draft revisions, and endpoint URLs. |
 | GET | `/mimi/v1/keyMaterial?user=` | Serve one local user's one-time KeyPackage. |
-| POST | `/mimi/v1/keyMaterial/ingest` | Gate + optionally publish a KeyPackage (local or foreign). |
+| POST | `/mimi/v1/keyMaterial/ingest` | Gate + optionally publish a KeyPackage: for a user of this provider, or for another provider's user only by a peer whose certificate is that provider's (403 otherwise). |
 | POST | `/mimi/v1/notify?room=` | Idempotent fanout receipt; the peer must be the hub of `room` (403 otherwise). |
 | POST | `/mimi/v1/welcome/ingest` | Gate + optionally relay a Welcome. |
 | GET | `/mimi/v1/welcome?user=` | Deliver-once pull of a queued Welcome. |

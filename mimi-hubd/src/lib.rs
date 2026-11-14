@@ -107,9 +107,7 @@ impl std::fmt::Display for UpdateRefusal {
             Self::Invalid(why) | Self::InvalidProposals(why, _) | Self::Limit(why) => {
                 f.write_str(why)
             }
-            Self::WrongEpoch(_) => {
-                f.write_str("the proposals are not for the room's current epoch")
-            }
+            Self::WrongEpoch(_) => f.write_str("this update is not for the room's current epoch"),
             Self::Store => f.write_str("the hub could not store this update"),
         }
     }
@@ -312,6 +310,22 @@ impl Provider {
 
     /// Publish a local user's one-time KeyPackage so cross-provider peers can claim it. Suite-gated,
     /// THEN stored with a TTL. (Distinct from `ingest_foreign_keypackage`, which only validates.)
+    /// Whether `user` (a bare name, or a user URI) may have KeyPackages published for it by `peer`: a user of this
+    /// provider always; another provider's user only when the peer's certificate authenticates that provider.
+    pub fn may_publish_for(&self, user: &str, peer: Option<&crate::peer::PeerIdentity>) -> bool {
+        if !user.contains("://") {
+            return true;
+        }
+        match MimiUri::parse(user) {
+            Ok(uri) if uri.kind == Some(MimiKind::User) => {
+                uri.is_local_to(&self.domain)
+                    || user_domain(user)
+                        .is_some_and(|domain| peer.is_some_and(|peer| peer.authenticates(&domain)))
+            }
+            _ => false,
+        }
+    }
+
     pub fn publish_key_package(
         &self,
         username: &str,
@@ -834,6 +848,18 @@ impl Provider {
         }
         self.assert_hub_of_record(room_uri)
             .map_err(|_| UpdateRefusal::NotAllowed)?;
+        // A Commit is accepted only at the epoch the hub learned from the room's latest accepted Commit, so one replayed
+        // after it was accepted (or sent at an older epoch) changes nothing. A room the hub has seen no Commit for takes
+        // the first at its own epoch.
+        if let Some(room_epoch) = self
+            .store
+            .room_epoch(room_uri)
+            .map_err(|_| UpdateRefusal::Store)?
+        {
+            if commit.epoch != room_epoch {
+                return Err(UpdateRefusal::WrongEpoch(room_epoch));
+            }
+        }
         self.include_held_proposals(room_uri, &mut commit, now_unix)?;
         let epoch = commit.epoch;
         self.apply_decoded_commit(room_uri, &commit, now_unix)?;

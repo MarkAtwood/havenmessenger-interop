@@ -300,15 +300,27 @@ struct RouteKey {
 }
 
 /// Foreign KeyPackage. `?user=X` → suite-gate THEN PUBLISH (claimable). No user → validate-only (204).
-/// 204 on accept, 400 if the gate rejects (non-0x0001 / undecodable); never reaches openmls.
+/// 204 on accept, 400 if the gate rejects (non-0x0001 / undecodable); never reaches openmls. A KeyPackage is published
+/// for a user of this provider, or for another provider's user only by a peer whose certificate is that provider's
+/// (403 otherwise), so no one can stock KeyPackages for someone else's users.
 async fn ingest_keypackage(
     State(p): State<SharedProvider>,
     Query(k): Query<RouteKey>,
+    peer: Option<Extension<PeerCert>>,
     body: Bytes,
 ) -> Response {
+    let peer = peer
+        .as_ref()
+        .and_then(|Extension(PeerCert(identity))| identity.as_ref());
     let g = lock(&p);
     let r = match k.user {
-        Some(user) => g.publish_key_package(&user, &body, now_unix()),
+        Some(user) => {
+            if !g.may_publish_for(&user, peer) {
+                eprintln!("[mimi-hubd] keyMaterial/ingest: refused (another provider's user, not that provider's certificate)");
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            g.publish_key_package(&user, &body, now_unix())
+        }
         None => g.ingest_foreign_keypackage(&body),
     };
     match r {
@@ -627,9 +639,10 @@ async fn report_abuse_wire(
 /// an unrecognized proposal type, a bundle of proposals that is not a leave), naming by `ProposalRef` a reference it
 /// holds nothing for or a held proposal the Commit leaves out. A bundle of proposals is a member leaving (protocol-07
 /// §3.5): they are held for the next Commit, which must include them by reference, and the peer's certificate bounds
-/// what they may remove (see `Provider::hold_leave_proposals`). `wrongEpoch` is answered only to proposals of another
-/// epoch than the one the hub learned from the room's latest accepted Commit; a Commit's own epoch is not checked, as
-/// the hub holds no group state. A store failure is a 500 with no body.
+/// what they may remove (see `Provider::hold_leave_proposals`). `wrongEpoch` is answered to a Commit or proposals of
+/// another epoch than the one the hub learned from the room's latest accepted Commit, so a replayed Commit changes
+/// nothing; a room the hub has seen no Commit for takes the first at its own epoch. A store failure is a 500 with no
+/// body.
 async fn update_wire(
     State(p): State<SharedProvider>,
     Path(room_id): Path<String>,
@@ -942,6 +955,9 @@ mod wire_tests;
 #[cfg(test)]
 #[path = "http_notify_tests.rs"]
 mod notify_tests;
+#[cfg(test)]
+#[path = "http_publish_tests.rs"]
+mod publish_tests;
 
 #[cfg(test)]
 #[path = "http_directory_tests.rs"]

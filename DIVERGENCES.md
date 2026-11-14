@@ -216,8 +216,9 @@ without needing that machinery in the first place.
     the peer presented a certificate, the epoch, whose provider the removed users are, then the bounds. So a leave
     replayed after its Commit is `wrongEpoch` whatever its indices name in the room now, any peer the transport trusts
     can learn the room's current epoch from that answer (an epoch every member's handshake messages carry), and only the
-    provider of a participant a leave removes learns what the room holds. A Commit's own epoch is not checked (the hub never answers a Commit
-    `wrongEpoch`); the epoch it is sent in is the one its references are read at.
+    provider of a participant a leave removes learns what the room holds. A Commit is checked the same way: one sent at
+    another epoch than the room's (a replay of one already accepted, for instance) is `wrongEpoch` and changes nothing;
+    the epoch it is sent in is also the one its references are read at.
   - Refused as a leave (`invalidProposal`, nothing held): a change that adds a participant or changes a role, a
     room-policy change, two changes, proposals of more than one epoch, or `Remove`s with no change (a Commit of
     `Remove`s alone is one this hub does not read, so holding those would hold the room). Held proposals are not fanned

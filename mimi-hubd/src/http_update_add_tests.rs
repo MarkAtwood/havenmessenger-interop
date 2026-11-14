@@ -287,3 +287,21 @@ async fn a_role_list_beside_a_participant_change_is_refused() {
     assert_eq!(listed(&p), vec![ALICE.to_string(), BOB.to_string()]);
     assert_eq!(p.lock().unwrap().room_policy(ROOM).unwrap(), None);
 }
+
+/// A Commit is accepted only at the room's current epoch: the same Commit sent again after it was accepted is
+/// wrongEpoch, naming the epoch the room is at, and changes nothing.
+#[tokio::test]
+async fn a_commit_replayed_after_it_was_accepted_is_wrong_epoch() {
+    let commit = commit_around(&update(&[CAROL], &[]), &[add_of(CAROL)], &[]);
+    let (router, p) = app();
+    room(&p);
+    let first = update_answer(post(router.clone(), ROOM, bundle_of(commit.clone())).await).await;
+    assert!(is_success(&first), "{first:?}");
+    let listed_after_first = listed(&p);
+    let again = update_answer(post(router, ROOM, bundle_of(commit)).await).await;
+    assert!(
+        matches!(again, UpdateRoomResponse::WrongEpoch { current_epoch, .. } if current_epoch >= 1),
+        "{again:?}"
+    );
+    assert_eq!(listed(&p), listed_after_first);
+}
