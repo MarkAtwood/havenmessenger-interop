@@ -87,3 +87,28 @@ fn a_lookup_in_another_spelling_finds_the_canonical_row() {
         Some("granted")
     );
 }
+
+#[test]
+fn a_store_at_version_1_has_its_iri_paths_mapped_to_uris_once() {
+    let dir = std::env::temp_dir().join(format!("mimi-canon-v1-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("hub.db");
+    let _ = std::fs::remove_file(&path);
+    drop(SqliteStore::open(path.to_str().unwrap()).unwrap());
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "PRAGMA user_version = 1;
+         INSERT INTO consent (requester, target, room_key, state, ts)
+             VALUES ('mimi://b.example/u/zoë', 'mimi://a.example/u/erin', '', 'granted', 1);",
+    )
+    .unwrap();
+    let report = canonicalize_stored_uris(&conn).unwrap();
+    assert_eq!(report.rewritten, 1, "{report:?}");
+    let requester: String = conn
+        .query_row("SELECT requester FROM consent", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(requester, "mimi://b.example/u/zo%C3%AB");
+    let again = canonicalize_stored_uris(&conn).unwrap();
+    assert_eq!(again.rewritten, 0, "{again:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -25,8 +25,9 @@ const URI_COLUMNS: &[(&str, &str)] = &[
     ("room_epoch", "room_uri"),
 ];
 
-/// The store's version after this pass; a store at it or later is not rewritten again.
-pub const CANONICAL_URIS_VERSION: i64 = 1;
+/// The store's version after this pass; a store at it or later is not rewritten again. Version 2 is the canonical form
+/// that also maps a path written as an IRI to its URI, so a store written at version 1 is rewritten once more.
+pub const CANONICAL_URIS_VERSION: i64 = 2;
 
 /// What the pass did: rows rewritten, and rows left as they were because their canonical form was already stored
 /// under a key the table holds once (they are named so an operator can look; nothing is merged or dropped).
