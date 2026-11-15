@@ -38,11 +38,13 @@ GENERIC_PATTERNS = {
         r"|\bsk_live_[0-9a-zA-Z]{24,}\b"  # Stripe secret key
         r"|\brk_live_[0-9a-zA-Z]{24,}\b"  # Stripe restricted key
     ),
-    # Excludes RFC 2606 reserved documentation domains/TLDs (example.com/.org/.net/.edu,
-    # .test/.invalid/.localhost) so test fixtures using those conventional placeholders
-    # are not flagged as a PII leak.
+    # Excludes RFC 2606 reserved documentation domains/TLDs (example.com/.org/.net/.edu, and
+    # the .example/.test/.invalid/.localhost TLDs) so test fixtures using those conventional
+    # placeholders are not flagged as a PII leak. The reserved name must be the domain's last
+    # label: "example-mail.com" or "example.co.uk" is still flagged.
     "email address (non-placeholder domain)": re.compile(
-        r"\b[\w.+-]+@(?!(?:[\w-]+\.)?(?:example\.(?:com|org|net|edu)|test|invalid|localhost)\b)"
+        r"\b[\w.+-]+@(?!(?:[\w-]+\.)*(?:example(?:\.(?:com|org|net|edu))?|test|invalid|localhost)"
+        r"(?![\w-]|\.[\w-]))"
         r"[\w-]+(?:\.[\w-]+)+\b"
     ),
     "private network IP literal (10.0.0.0/8)": re.compile(r"\b10(?:\.\d{1,3}){3}\b"),
@@ -125,6 +127,7 @@ const SUITE: u16 = 0x0001;
 // Test fixtures use the RFC 2606 reserved documentation domain.
 let uri = "mimi://a.example/u/alice";
 let email = "alice@example.com";
+let peer = "henry@a.example";
 // A curl example using @file redirection, not an email address.
 // curl -X POST --data-binary @notify.bin https://localhost:8443/mimi/pl/notify
 // A different private-network range, outside what this scan targets.
@@ -137,6 +140,7 @@ _SELF_TEST_TELL_FIXTURE = """
 -----BEGIN RSA PRIVATE KEY-----
 let key = "AKIAABCDEFGHIJKLMNOP";
 let contact = "user@example-mail.com";
+let other = "user@example.co.uk";
 let host = "10.0.0.1";
 """
 
