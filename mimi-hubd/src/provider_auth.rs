@@ -28,12 +28,15 @@ const DIRECTORY: &str = "/.well-known/mimi-protocol-directory";
 
 /// `router` behind the provider-auth gate, with signatures checked against `keys`.
 pub fn with_provider_auth(router: Router, keys: Arc<PeerKeys>) -> Router {
-    router.layer(axum::middleware::from_fn(
-        move |request: Request, next: Next| {
-            let keys = keys.clone();
-            async move { gate(&keys, request, next).await }
-        },
-    ))
+    router
+        .layer(axum::middleware::from_fn(
+            move |request: Request, next: Next| {
+                let keys = keys.clone();
+                async move { gate(&keys, request, next).await }
+            },
+        ))
+        // A refusal by the gate itself is answered from outside the router, so it gets the Server header here too.
+        .layer(axum::middleware::map_response(crate::http::server_header))
 }
 
 async fn gate(keys: &PeerKeys, request: Request, next: Next) -> Response {

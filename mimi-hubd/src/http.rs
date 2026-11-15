@@ -77,6 +77,18 @@ pub fn build_router(provider: SharedProvider) -> Router {
         .route("/mimi/v1/authorizeSender", post(authorize_sender)) // M2/R3/P5, may this member send?
         .merge(wire_router())
         .with_state(provider)
+        .layer(axum::middleware::map_response(server_header))
+}
+
+/// The `Server` header every answer carries: this implementation and its version.
+pub const SERVER: &str = concat!("mimi-hubd/", env!("CARGO_PKG_VERSION"));
+
+pub(crate) async fn server_header(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::SERVER,
+        axum::http::HeaderValue::from_static(SERVER),
+    );
+    response
 }
 
 /// The directory and nothing else: `GET /.well-known/mimi-protocol-directory`, for a listener that needs no client
@@ -87,6 +99,7 @@ pub fn build_directory_router(provider: SharedProvider) -> Router {
     Router::new()
         .route("/.well-known/mimi-protocol-directory", get(directory))
         .with_state(provider)
+        .layer(axum::middleware::map_response(server_header))
 }
 
 /// The `/mimi/pl/*` routes: the draft's TLS presentation-language wire framing. Every body they answer with is

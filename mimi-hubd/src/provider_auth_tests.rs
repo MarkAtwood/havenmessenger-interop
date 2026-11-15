@@ -80,6 +80,11 @@ async fn every_route_but_the_directory_refuses_a_request_with_no_proof() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+        assert_eq!(
+            response.headers().get(axum::http::header::SERVER).unwrap(),
+            crate::http::SERVER,
+            "{method} {path}"
+        );
     }
     let directory = router
         .oneshot(

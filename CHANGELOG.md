@@ -6,6 +6,10 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
 
 ## Unreleased
 
+- Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.
+- Releases are signed: `SHA256SUMS` and a detached signature by the Haven Releases key on each release, signed tags,
+  and the public key in `RELEASE-KEY.asc`. The README says how to verify one.
+
 - The hub reads and keeps `room_metadata` (`0x0023`, protocol-07 §10) instead of refusing it: a room's name,
   descriptions, avatar, subject and mood are stored as the last accepted update sent them, within bounds. A room that
   sets any of it requires every member to support the component, so its users can now be in such rooms.

@@ -349,3 +349,33 @@ async fn a_name_outside_ascii_is_found_both_ways_and_answered_as_a_uri() {
         );
     }
 }
+
+#[tokio::test]
+async fn every_answer_names_the_server_and_its_version() {
+    let (router, _p) = app();
+    let directory = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/.well-known/mimi-protocol-directory")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let missing = router
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/no/such/route")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    for response in [directory, missing] {
+        assert_eq!(
+            response.headers().get(axum::http::header::SERVER).unwrap(),
+            concat!("mimi-hubd/", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}
