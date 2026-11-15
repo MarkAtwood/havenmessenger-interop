@@ -63,3 +63,19 @@ fn a_bare_name_is_not_a_handle() {
 fn other_search_types_name_nobody() {
     assert_eq!(enrolled_name(Email, "erin@hub.example", HUB), None);
 }
+
+#[test]
+fn a_name_outside_ascii_is_found_raw_or_percent_encoded() {
+    for spelling in [
+        "mimi://hub.example/u/café",
+        "mimi://hub.example/u/caf%C3%A9",
+        "mimi://hub.example/u/caf%c3%a9",
+        "im:café@hub.example",
+        "im:caf%C3%A9@hub.example",
+    ] {
+        assert_eq!(handle(spelling).as_deref(), Some("café"), "{spelling}");
+    }
+    // A user part that does not decode to UTF-8 names nobody.
+    assert_eq!(handle("mimi://hub.example/u/%FF"), None);
+    assert_eq!(handle("im:%FF@hub.example"), None);
+}

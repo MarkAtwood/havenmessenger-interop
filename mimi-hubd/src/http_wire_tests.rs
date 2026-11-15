@@ -305,3 +305,47 @@ async fn a_handle_search_takes_the_whole_handle_uri() {
         StatusCode::OK
     );
 }
+
+#[tokio::test]
+async fn a_name_outside_ascii_is_found_both_ways_and_answered_as_a_uri() {
+    use http_body_util::BodyExt;
+    use mimi_core::protocol_wire::{
+        IdentifierQueryCode, IdentifierRequest, IdentifierResponse, QueryElement,
+        SearchIdentifierType,
+    };
+    let query = |value: &str| {
+        IdentifierRequest {
+            query_elements: vec![QueryElement {
+                search_type: SearchIdentifierType::Handle,
+                qualifier: Vec::new(),
+                search_value: value.as_bytes().to_vec(),
+            }],
+        }
+        .encode()
+        .unwrap()
+    };
+    let (router, p) = app();
+    p.lock().unwrap().enroll("café").unwrap();
+    for handle in [
+        "mimi://havenmessenger.com/u/café",
+        "mimi://havenmessenger.com/u/caf%C3%A9",
+    ] {
+        let response = post(router.clone(), "/mimi/pl/identifierQuery", query(handle)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{handle}");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let answer = IdentifierResponse::decode(&body).unwrap();
+        assert_eq!(
+            answer.response_code,
+            IdentifierQueryCode::Success,
+            "{handle}"
+        );
+        // The answer is a URI (RFC 3986), the name percent-encoded from its UTF-8, never raw UTF-8.
+        assert_eq!(
+            answer.uris,
+            vec![mimi_core::protocol_wire::IdentifierUri(
+                "mimi://havenmessenger.com/u/caf%C3%A9".into()
+            )],
+            "{handle}"
+        );
+    }
+}

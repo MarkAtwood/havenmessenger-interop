@@ -56,9 +56,11 @@ asked.
 As §5.8 has it, a `Nick` search is the bare user name (`alice`), and a `Handle` search is the
 entire handle URI. The handle URI forms this hub takes for one of its users are
 `mimi://<this hub's domain>/u/<name>`, compared in canonical form (RFC 3986 §6.2.2: case in the
-scheme and host, percent-encoded unreserved characters), and `im:<name>@<this hub's domain>`,
-the form of the draft's own example. A handle on another provider, a room or device URI, or a
-bare name searched as a handle is not-found.
+scheme and host, percent-encoded unreserved characters; a name written as an IRI is mapped to its
+URI, RFC 3987 §3.1, so `zoë` and `zo%C3%AB` are one name), and `im:<name>@<this hub's domain>`,
+the form of the draft's own example. A found user is answered as a URI, the name percent-encoded
+from its UTF-8. A handle on another provider, a room or device URI, a bare name searched as a
+handle, or a name that does not decode to UTF-8 is not-found.
 
 ## DIV-5 - `submitMessage`'s sender authorization and fan-out - MOSTLY CLOSED
 

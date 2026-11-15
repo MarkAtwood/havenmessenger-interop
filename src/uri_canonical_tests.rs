@@ -31,23 +31,56 @@ fn the_path_keeps_its_case_and_reserved_escapes_keep_their_meaning() {
         canonical("mimi://a.example/r/a%2fb"),
         "mimi://a.example/r/a%2Fb"
     );
-    // A broken escape is kept as it is.
+    // A `%` that starts no escape is a character of its own, so it is encoded (RFC 3987 §3.1).
     assert_eq!(
         canonical("mimi://a.example/u/50%"),
-        "mimi://a.example/u/50%"
+        "mimi://a.example/u/50%25"
     );
     assert_eq!(
         canonical("mimi://a.example/u/a%zz"),
-        "mimi://a.example/u/a%zz"
+        "mimi://a.example/u/a%25zz"
     );
 }
 
 #[test]
-fn a_path_outside_ascii_comes_through_unchanged() {
+fn a_path_outside_ascii_is_mapped_to_its_uri() {
+    for spelling in [
+        "mimi://A.example/u/zoë",
+        "mimi://a.example/u/zo%C3%AB",
+        "mimi://a.example/u/zo%c3%ab",
+    ] {
+        assert_eq!(
+            canonical(spelling),
+            "mimi://a.example/u/zo%C3%AB",
+            "{spelling}"
+        );
+    }
     assert_eq!(
-        canonical("mimi://A.example/u/zoë"),
-        "mimi://a.example/u/zoë"
+        canonical("mimi://a.example/u/a b"),
+        "mimi://a.example/u/a%20b"
     );
+    // Sub-delims, `:` and `@` stand as themselves in a path.
+    assert_eq!(
+        canonical("mimi://a.example/u/a!$&'()*+,;=:@b"),
+        "mimi://a.example/u/a!$&'()*+,;=:@b"
+    );
+    assert!(canonical("mimi://a.example/u/名前 ü").is_ascii());
+}
+
+#[test]
+fn a_name_goes_into_a_path_segment_and_comes_back() {
+    for name in ["erin", "café", "a b", "50%", "a/b", "名前", "x@y"] {
+        let encoded = encode_path_segment(name);
+        assert!(encoded.is_ascii() && !encoded.contains('/'), "{encoded}");
+        assert_eq!(percent_decode_utf8(&encoded).as_deref(), Some(name));
+        assert_eq!(
+            canonical(&format!("mimi://a.example/u/{encoded}")),
+            format!("mimi://a.example/u/{encoded}")
+        );
+    }
+    assert_eq!(encode_path_segment("café"), "caf%C3%A9");
+    assert_eq!(percent_decode_utf8("%FF"), None);
+    assert_eq!(percent_decode_utf8("a%2"), None);
 }
 
 #[test]

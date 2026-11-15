@@ -317,8 +317,9 @@ diagnostic instead of a silent no-op.
 
 The hub stores and compares every `mimi://` URI in its canonical form (RFC 3986 §6.2.2, `mimi_core::uri::canonical`):
 the scheme and the host in lowercase, a percent-encoded unreserved character decoded, any other percent-encoding's hex
-digits in uppercase; the path keeps its case. So `MIMI://A.Example/u/%61lice` and `mimi://a.example/u/alice` are the
-same user. A store written before this rewrites its URIs once, at the first open, and logs any row it left because its
+digits in uppercase; the path keeps its case, and a path written as an IRI is mapped to its URI (RFC 3987 §3.1: any
+byte that may not stand as itself in a path is percent-encoded from its UTF-8). So `MIMI://A.Example/u/%61lice` and
+`mimi://a.example/u/alice` are the same user, and so are `mimi://a.example/u/zoë` and `mimi://a.example/u/zo%C3%AB`. A store written before this rewrites its URIs once, at the first open, and logs any row it left because its
 canonical form was already stored.
 
 ## Enrolling a handle for identifierQuery

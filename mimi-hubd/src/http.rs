@@ -607,7 +607,12 @@ async fn identifier_query_wire(State(p): State<SharedProvider>, body: Bytes) -> 
             let username = crate::identifier_search::enrolled_name(search_type, &value, &g.domain)?;
             match g.identifier_query(&username) {
                 Ok(IdentifierQueryResult::Found) => {
-                    Some(format!("mimi://{}/u/{username}", g.domain))
+                    // The name goes into the URI percent-encoded, so a name in any script is answered as a URI.
+                    Some(format!(
+                        "mimi://{}/u/{}",
+                        g.domain,
+                        mimi_core::uri::encode_path_segment(&username)
+                    ))
                 }
                 Ok(IdentifierQueryResult::NotFound) | Err(_) => None,
             }

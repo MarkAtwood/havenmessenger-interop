@@ -146,9 +146,11 @@ impl fmt::Display for MimiUri {
 
 /// The canonical form of a `mimi://` URI (RFC 3986 §6.2.2): the scheme and the authority in lowercase, a percent-encoded
 /// unreserved character (ALPHA, DIGIT, `-`, `.`, `_`, `~`) decoded, and any other percent-encoding's hex digits in
-/// uppercase. The path keeps its case. Two URIs that name the same thing have the same canonical form, so a store keyed by
-/// it finds `MIMI://A.Example/u/%61lice` under `mimi://a.example/u/alice`. Anything that is not a `mimi://` URI (a bare
-/// user name, for one) is returned as given.
+/// uppercase. The path keeps its case. A path written as an IRI is mapped to its URI (RFC 3987 §3.1): each byte that is
+/// not unreserved, a sub-delim, `:`, `@` or `/`, and not part of a percent-encoding, is percent-encoded from its UTF-8,
+/// so `zoë` and `zo%C3%AB` are one path. Two URIs that name the same thing have the same canonical form, so a store
+/// keyed by it finds `MIMI://A.Example/u/%61lice` under `mimi://a.example/u/alice`. Anything that is not a `mimi://` URI
+/// (a bare user name, for one) is returned as given.
 pub fn canonical(s: &str) -> String {
     let Some(rest) = s
         .get(..7)
@@ -160,14 +162,74 @@ pub fn canonical(s: &str) -> String {
     let (authority, path) = rest.find('/').map_or((rest, ""), |i| rest.split_at(i));
     let mut out = String::with_capacity(s.len());
     out.push_str("mimi://");
-    out.push_str(&normalize_percent(authority).to_ascii_lowercase());
-    out.push_str(&normalize_percent(path));
+    out.push_str(&normalize_percent(authority, false).to_ascii_lowercase());
+    out.push_str(&normalize_percent(path, true));
     out
 }
 
-/// Decode each percent-encoded unreserved character and uppercase the hex digits of every other percent-encoding. Bytes
-/// outside a percent-encoding are kept as they are, so a path in any script comes through unchanged.
-fn normalize_percent(part: &str) -> String {
+/// Whether `byte` may stand as itself in a path: unreserved, a sub-delim, `:` or `@` (RFC 3986 §3.3), and `/` when
+/// `slash` is set.
+const fn path_byte(byte: u8, slash: bool) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'-' | b'.'
+                | b'_'
+                | b'~'
+                | b'!'
+                | b'$'
+                | b'&'
+                | b'\''
+                | b'('
+                | b')'
+                | b'*'
+                | b'+'
+                | b','
+                | b';'
+                | b'='
+                | b':'
+                | b'@'
+        )
+        || (slash && byte == b'/')
+}
+
+/// `name` as one path segment: every byte that may not stand as itself in a segment, `/` included, percent-encoded from
+/// its UTF-8 with uppercase hex. The form in which a user name goes into a `mimi://<domain>/u/<name>` URI.
+pub fn encode_path_segment(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for &byte in name.as_bytes() {
+        if path_byte(byte, false) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// `text` with every percent-encoding decoded, or `None` when an escape is malformed or the result is not UTF-8. The
+/// inverse of [`encode_path_segment`] for a name.
+pub fn percent_decode_utf8(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Decode each percent-encoded unreserved character and uppercase the hex digits of every other percent-encoding. With
+/// `encode_raw`, a byte outside a percent-encoding that may not stand as itself in a path is percent-encoded (RFC 3987
+/// §3.1); without it, such bytes are kept as they are.
+fn normalize_percent(part: &str, encode_raw: bool) -> String {
     let bytes = part.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -187,6 +249,10 @@ fn normalize_percent(part: &str) -> String {
                     out.extend(hex.iter().map(u8::to_ascii_uppercase));
                 }
                 i += 3;
+            }
+            None if encode_raw && !path_byte(bytes[i], true) => {
+                out.extend(format!("%{:02X}", bytes[i]).bytes());
+                i += 1;
             }
             None => {
                 out.push(bytes[i]);
