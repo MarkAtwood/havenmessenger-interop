@@ -6,6 +6,8 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
 
 ## Unreleased
 
+- `docs/problems.md` names the problem types mimi-hubd answers with (RFC 9457), starting with
+  `remote-room-not-delivered`.
 - Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.
 - Releases are signed: `SHA256SUMS` and a detached signature by the Haven Releases key on each release, signed tags,
   and the public key in `RELEASE-KEY.asc`. The README says how to verify one.
