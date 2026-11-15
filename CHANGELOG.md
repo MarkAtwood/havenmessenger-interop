@@ -4,6 +4,12 @@ This project uses 0.x semantic versions: a minor version changes the wire format
 anything else. Each release names the drafts it implements and the divergences from them that remain open; the reasons
 are in [DIVERGENCES.md](DIVERGENCES.md).
 
+## Unreleased
+
+- The hub reads and keeps `room_metadata` (`0x0023`, protocol-07 §10) instead of refusing it: a room's name,
+  descriptions, avatar, subject and mood are stored as the last accepted update sent them, within bounds. A room that
+  sets any of it requires every member to support the component, so its users can now be in such rooms.
+
 ## 0.0.2 - 2026-11-15
 
 Implements draft-ietf-mimi-protocol-07, draft-ietf-mimi-content-10, draft-ietf-mimi-room-policy-04,

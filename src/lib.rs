@@ -33,6 +33,7 @@ pub mod gate;
 pub mod message_id;
 pub mod participant_list;
 pub mod protocol_wire;
+pub mod room_metadata;
 pub mod room_policy;
 pub mod room_policy_wire;
 #[cfg(all(feature = "external-ops", test))]

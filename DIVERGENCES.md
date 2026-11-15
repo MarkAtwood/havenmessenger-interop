@@ -366,8 +366,13 @@ above its maximum, when a parent-dependent room names no parent or any other nam
 resulting policy does not validate (the reserved roles 0 and 1, a transition that names an undefined
 role, a fixed-membership room whose role may add participants).
 
-The other eleven components are refused as an unrecognized proposal type, as are `room_metadata`
-(`0x0023`, protocol-07 §10.4), a removal of any component, and an AppSync proposal, so a sender is told
+`room_metadata` (`0x0023`, protocol-07 §10.4) is read and kept: a `RoomMetaData` that decodes within bounds (16 KiB
+in all, 1 KiB a text, 4 KiB a description, 16 descriptions, UTF-8 without NUL, an `https` avatar or none) and names
+this room is stored as sent, replacing the last one, alone or beside the changes above. It is display data and the hub
+enforces nothing from it; who may change it is not checked, since no capability for it is kept.
+
+The other eleven components are refused as an unrecognized proposal type, as are a removal of any component and an
+AppSync proposal, so a sender is told
 the change was not applied and never that it was: `mls_operational_policy` (`0x0024`), `preauth_list`
 (`0x0026`), `status_notification_policy` (`0x0028`), `join_link_policy` (`0x0029`), `join_links`
 (`0x002a`), `link_preview_policy` (`0x002b`), `asset_policy` (`0x002c`), `logging_policy` (`0x002d`),

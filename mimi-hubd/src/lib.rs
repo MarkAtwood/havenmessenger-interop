@@ -986,12 +986,13 @@ impl Provider {
     ) -> Result<(), UpdateRefusal> {
         if commit.updates.is_empty() {
             return Err(UpdateRefusal::Invalid(
-                "the Commit carries no participant-list or room-policy change",
+                "the Commit carries no participant-list, room-policy or room-metadata change",
             ));
         }
         let mut participants = None;
         let mut roles = None;
         let mut base = None;
+        let mut metadata = None;
         for change in &commit.updates {
             match change.proposal_type {
                 MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE => {
@@ -1015,6 +1016,20 @@ impl Provider {
                     base = Some(decode_base_room_policy(&change.payload).map_err(|_| {
                         UpdateRefusal::Invalid("the base room policy is malformed")
                     })?);
+                }
+                mimi_core::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE => {
+                    // Display data (protocol-07 §10): read with bounds, kept as sent, and enforced on nothing. It names
+                    // its own room, so a value naming another room is refused.
+                    let read = mimi_core::room_metadata::decode_room_metadata(&change.payload)
+                        .map_err(|_| UpdateRefusal::Invalid("the room metadata is malformed"))?;
+                    if mimi_core::uri::canonical(&read.room_uri)
+                        != mimi_core::uri::canonical(room_uri)
+                    {
+                        return Err(UpdateRefusal::Invalid(
+                            "the room metadata names another room",
+                        ));
+                    }
+                    metadata = Some(change.payload.clone());
                 }
                 _ => {
                     return Err(UpdateRefusal::Invalid(
@@ -1061,10 +1076,21 @@ impl Provider {
         if let Some(update) = &participants {
             self.apply_participant_list_update(room_uri, update, now_unix)?;
         }
-        match policy {
-            Some(policy) => self.store_room_policy(room_uri, policy, now_unix),
+        if let Some(policy) = policy {
+            self.store_room_policy(room_uri, policy, now_unix)?;
+        }
+        match metadata {
+            Some(metadata) => self
+                .store
+                .set_room_metadata(room_uri, &metadata, now_unix)
+                .map_err(|e| store_refusal(&e)),
             None => Ok(()),
         }
+    }
+
+    /// The room's metadata as its last accepted update sent it (protocol-07 §10), if it has any.
+    pub fn room_metadata(&self, room_uri: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        self.store.room_metadata(room_uri)
     }
 
     /// What a Commit's `Add` and `Remove` proposals must say beside its change (when it has any), checked against the list the room holds now

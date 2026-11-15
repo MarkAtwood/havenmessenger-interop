@@ -350,8 +350,8 @@ fn normalize_proposal_message(
     Ok(Some(Normalized { bytes: out, delta }))
 }
 
-/// The change type an AppDataUpdate to `component` is read as: the participant list, `roles_list` or
-/// `base_room_policy`. Any other component has none.
+/// The change type an AppDataUpdate to `component` is read as: the participant list, `roles_list`,
+/// `base_room_policy` or `room_metadata`. Any other component has none.
 const fn change_type_of(component: u16) -> Option<u16> {
     match component {
         PARTICIPANT_LIST_COMPONENT_ID => {
@@ -360,6 +360,9 @@ const fn change_type_of(component: u16) -> Option<u16> {
         ROLES_LIST_COMPONENT_ID => Some(crate::room_policy::MIMI_ROLES_LIST_PROPOSAL_TYPE),
         BASE_ROOM_POLICY_COMPONENT_ID => {
             Some(crate::room_policy::MIMI_BASE_ROOM_POLICY_PROPOSAL_TYPE)
+        }
+        crate::room_metadata::ROOM_METADATA_COMPONENT_ID => {
+            Some(crate::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE)
         }
         _ => None,
     }
@@ -687,10 +690,11 @@ pub fn check_changes(changes: &[DecodedCustomProposal]) -> Result<(), &'static s
     let participant_list = count(crate::participant_list::MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE);
     let roles_list = count(crate::room_policy::MIMI_ROLES_LIST_PROPOSAL_TYPE);
     let base_room_policy = count(crate::room_policy::MIMI_BASE_ROOM_POLICY_PROPOSAL_TYPE);
+    let room_metadata = count(crate::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE);
     if participant_list > 1 {
         return Err(TWO_PARTICIPANT_LIST_UPDATES);
     }
-    if roles_list > 1 || base_room_policy > 1 {
+    if roles_list > 1 || base_room_policy > 1 || room_metadata > 1 {
         return Err(TWO_POLICY_CHANGES_OF_ONE_KIND);
     }
     if roles_list == 1 && participant_list == 1 {
@@ -838,6 +842,7 @@ const fn is_a_change_this_crate_reads(proposal_type: u16) -> bool {
     proposal_type == crate::participant_list::MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE
         || proposal_type == crate::room_policy::MIMI_ROLES_LIST_PROPOSAL_TYPE
         || proposal_type == crate::room_policy::MIMI_BASE_ROOM_POLICY_PROPOSAL_TYPE
+        || proposal_type == crate::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE
 }
 
 fn read_u32<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u32, &'a [u8]), WireError> {
