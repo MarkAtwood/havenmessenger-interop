@@ -39,9 +39,10 @@ asset transfer, no OHTTP relay path (`§5.10`).
 ## DIV-4 - `identifierQuery` has no existence oracle, and only ever answers a single Handle or Nick query
 
 Only users who opted in (enrolled) can be found. On the TLS-PL wire lane the answer is an `IdentifierResponse`, as
-§5.8 has it: an enrollee is HTTP 200 with `success` and the user's URI on this provider; every other answer is HTTP 404
-with the same `notFound` body, byte for byte, whether the user is not enrolled, does not exist, or the request could not
-be decoded or evaluated. So an answer says found or not found and nothing else, and repeated queries cannot tell a real
+§5.8 has it, always HTTP 200 (notFound means the request was acceptable and nothing matched, so the code in the body
+says the outcome): an enrollee is `success` with the user's URI on this provider; every other answer is the same
+`notFound` body, byte for byte, whether the user is not enrolled, does not exist, or the request could not be decoded or
+evaluated. So an answer says found or not found and nothing else, and repeated queries cannot tell a real
 but private account from a name nobody has. The JSON lane answers with the bare status (200 or 404, no body).
 
 This also means the hub cannot honor the draft's implied AND-across-elements semantics for a

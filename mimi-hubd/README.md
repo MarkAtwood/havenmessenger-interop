@@ -323,7 +323,7 @@ canonical form was already stored.
 
 ## Enrolling a handle for identifierQuery
 
-`identifierQuery` answers 200 only for a handle that opted in, and 404 with no body for every other one
+`identifierQuery` answers `success` only for a handle that opted in, and the one `notFound` answer for every other one, both HTTP 200 on the wire lane (the JSON lane answers 404 with no body)
 (`../DIVERGENCES.md`, DIV-4). No route enrolls a handle, so no peer can make a user discoverable. The operator does
 it, on the hub's host:
 

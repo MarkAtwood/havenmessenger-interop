@@ -16,6 +16,17 @@ use super::tests::{app, real_mls_envelope_bytes};
 const REQUESTER: &str = "mimi://mimi-b.havenmessenger.com/u/bob";
 const TARGET: &str = "mimi://havenmessenger.com/u/alice";
 
+/// The code an identifierQuery answer carries in its body: found and not found are both HTTP 200 (§5.8), so the code
+/// is what tells them apart.
+async fn identifier_code(response: Response) -> mimi_core::protocol_wire::IdentifierQueryCode {
+    use http_body_util::BodyExt;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    mimi_core::protocol_wire::IdentifierResponse::decode(&body)
+        .unwrap()
+        .response_code
+}
+
 async fn post(router: Router, uri: &str, body: Vec<u8>) -> Response {
     router
         .oneshot(
@@ -216,15 +227,16 @@ async fn identifier_query_answers_on_the_domain_path_and_on_the_older_one() {
     ] {
         let (router, p) = app();
         p.lock().unwrap().enroll("alice").unwrap();
-        // An enrolled handle is found (200) and anything else is the bare 404: a missing route would be 404 for both.
+        // An enrolled name is success and anything else notFound, both answered on this path: a missing route would
+        // answer neither.
         assert_eq!(
-            post(router.clone(), uri, query("alice")).await.status(),
-            StatusCode::OK,
+            identifier_code(post(router.clone(), uri, query("alice")).await).await,
+            mimi_core::protocol_wire::IdentifierQueryCode::Success,
             "{uri}"
         );
         assert_eq!(
-            post(router, uri, query("nobody")).await.status(),
-            StatusCode::NOT_FOUND,
+            identifier_code(post(router, uri, query("nobody")).await).await,
+            mimi_core::protocol_wire::IdentifierQueryCode::NotFound,
             "{uri}"
         );
     }
@@ -273,14 +285,16 @@ async fn a_handle_search_takes_the_whole_handle_uri() {
         "mimi://havenmessenger.com/r/alice",
     ] {
         assert_eq!(
-            post(
-                router.clone(),
-                uri,
-                query(SearchIdentifierType::Handle, not_ours)
+            identifier_code(
+                post(
+                    router.clone(),
+                    uri,
+                    query(SearchIdentifierType::Handle, not_ours)
+                )
+                .await
             )
-            .await
-            .status(),
-            StatusCode::NOT_FOUND,
+            .await,
+            mimi_core::protocol_wire::IdentifierQueryCode::NotFound,
             "{not_ours}"
         );
     }

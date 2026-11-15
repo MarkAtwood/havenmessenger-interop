@@ -626,8 +626,10 @@ fn identifier_answer(found: Option<String>) -> Response {
                 uris: vec![IdentifierUri(uri)],
             },
         ),
+        // §5.8: notFound means the request was acceptable and nothing matched, so the exchange itself succeeded and the
+        // code in the body says what was found. Every miss is this same answer, status and bytes alike (DIV-4).
         None => (
-            StatusCode::NOT_FOUND,
+            StatusCode::OK,
             IdentifierResponse {
                 response_code: IdentifierQueryCode::NotFound,
                 uris: Vec::new(),
@@ -2305,8 +2307,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(not_enrolled.status(), StatusCode::NOT_FOUND);
-        assert_eq!(nonexistent.status(), StatusCode::NOT_FOUND);
+        // §5.8: notFound is an accepted request with no match, answered 200 with the code in the body.
+        assert_eq!(not_enrolled.status(), StatusCode::OK);
+        assert_eq!(nonexistent.status(), StatusCode::OK);
         // DIV-4: a user who is not enrolled and one who does not exist get the same bytes, and so does a request
         // this hub cannot decode.
         let not_enrolled = not_enrolled.into_body().collect().await.unwrap().to_bytes();
@@ -2331,7 +2334,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(garbage.status(), StatusCode::NOT_FOUND);
+        assert_eq!(garbage.status(), StatusCode::OK);
         assert_eq!(
             garbage.into_body().collect().await.unwrap().to_bytes(),
             not_enrolled
