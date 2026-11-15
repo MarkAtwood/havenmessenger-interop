@@ -601,9 +601,10 @@ async fn identifier_query(
 async fn identifier_query_wire(State(p): State<SharedProvider>, body: Bytes) -> Response {
     let found = mimi_core::protocol_wire::IdentifierRequest::decode(&body)
         .ok()
-        .and_then(|req| req.primary_search_value())
-        .and_then(|username| {
+        .and_then(|req| req.primary_search())
+        .and_then(|(search_type, value)| {
             let g = lock(&p);
+            let username = crate::identifier_search::enrolled_name(search_type, &value, &g.domain)?;
             match g.identifier_query(&username) {
                 Ok(IdentifierQueryResult::Found) => {
                     Some(format!("mimi://{}/u/{username}", g.domain))
@@ -2248,7 +2249,8 @@ mod tests {
         let query = |value: &str| {
             IdentifierRequest {
                 query_elements: vec![QueryElement {
-                    search_type: SearchIdentifierType::Handle,
+                    // A bare name is a nick search (§5.8); a handle search takes the whole handle URI.
+                    search_type: SearchIdentifierType::Nick,
                     qualifier: Vec::new(),
                     search_value: value.as_bytes().to_vec(),
                 }],

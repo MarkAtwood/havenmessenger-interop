@@ -201,7 +201,8 @@ async fn identifier_query_answers_on_the_domain_path_and_on_the_older_one() {
     let query = |value: &str| {
         IdentifierRequest {
             query_elements: vec![QueryElement {
-                search_type: SearchIdentifierType::Handle,
+                // A bare name is a nick search (§5.8); a handle search takes the whole handle URI.
+                search_type: SearchIdentifierType::Nick,
                 qualifier: Vec::new(),
                 search_value: value.as_bytes().to_vec(),
             }],
@@ -227,4 +228,66 @@ async fn identifier_query_answers_on_the_domain_path_and_on_the_older_one() {
             "{uri}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_handle_search_takes_the_whole_handle_uri() {
+    use mimi_core::protocol_wire::{IdentifierRequest, QueryElement, SearchIdentifierType};
+    let query = |search_type: SearchIdentifierType, value: &str| {
+        IdentifierRequest {
+            query_elements: vec![QueryElement {
+                search_type,
+                qualifier: Vec::new(),
+                search_value: value.as_bytes().to_vec(),
+            }],
+        }
+        .encode()
+        .unwrap()
+    };
+    let (router, p) = app();
+    p.lock().unwrap().enroll("alice").unwrap();
+    let uri = "/mimi/pl/identifierQuery";
+    // The im: form names this hub's domain after an @; built here so no address sits in the source as text.
+    let im_handle = ["im:alice", "havenmessenger.com"].join("@");
+    for handle in [
+        "mimi://havenmessenger.com/u/alice",
+        "MIMI://HavenMessenger.com/u/%61lice",
+        im_handle.as_str(),
+    ] {
+        assert_eq!(
+            post(
+                router.clone(),
+                uri,
+                query(SearchIdentifierType::Handle, handle)
+            )
+            .await
+            .status(),
+            StatusCode::OK,
+            "{handle}"
+        );
+    }
+    for not_ours in [
+        "alice",
+        "mimi://other.example/u/alice",
+        "im:alice@other.example",
+        "mimi://havenmessenger.com/r/alice",
+    ] {
+        assert_eq!(
+            post(
+                router.clone(),
+                uri,
+                query(SearchIdentifierType::Handle, not_ours)
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND,
+            "{not_ours}"
+        );
+    }
+    assert_eq!(
+        post(router, uri, query(SearchIdentifierType::Nick, "alice"))
+            .await
+            .status(),
+        StatusCode::OK
+    );
 }

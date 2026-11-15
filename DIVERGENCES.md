@@ -36,7 +36,7 @@ the gate rather than passed through.
 Not supported. v1 is messaging-only: text content over the wire and JSON lanes, no binary
 asset transfer, no OHTTP relay path (`§5.10`).
 
-## DIV-4 - `identifierQuery` has no existence oracle, and only ever answers a single Handle query
+## DIV-4 - `identifierQuery` has no existence oracle, and only ever answers a single Handle or Nick query
 
 Only users who opted in (enrolled) can be found. On the TLS-PL wire lane the answer is an `IdentifierResponse`, as
 §5.8 has it: an enrollee is HTTP 200 with `success` and the user's URI on this provider; every other answer is HTTP 404
@@ -46,11 +46,18 @@ but private account from a name nobody has. The JSON lane answers with the bare 
 
 This also means the hub cannot honor the draft's implied AND-across-elements semantics for a
 multi-element `IdentifierRequest`: v1 has no data model for `email`/`phone`/`oidcStdClaim`/
-`vcardField`/etc. lookups, only usernames (wire type `Handle`). A request is answered only when
-it carries exactly one query element of type `Handle`; a request with zero elements, more than
-one element, or any non-`Handle` element is treated as unanswerable and always returns
-not-found, rather than silently evaluating just the first element regardless of its type or
-what else was asked.
+`vcardField`/etc. lookups, only usernames. A request is answered only when it carries exactly
+one query element of type `Handle` or `Nick`; a request with zero elements, more than one
+element, or any other element type is treated as unanswerable and always returns not-found,
+rather than silently evaluating just the first element regardless of its type or what else was
+asked.
+
+As §5.8 has it, a `Nick` search is the bare user name (`alice`), and a `Handle` search is the
+entire handle URI. The handle URI forms this hub takes for one of its users are
+`mimi://<this hub's domain>/u/<name>`, compared in canonical form (RFC 3986 §6.2.2: case in the
+scheme and host, percent-encoded unreserved characters), and `im:<name>@<this hub's domain>`,
+the form of the draft's own example. A handle on another provider, a room or device URI, or a
+bare name searched as a handle is not-found.
 
 ## DIV-5 - `submitMessage`'s sender authorization and fan-out - MOSTLY CLOSED
 

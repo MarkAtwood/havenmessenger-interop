@@ -25,6 +25,7 @@
 pub mod activity;
 pub mod enroll;
 pub mod http;
+pub mod identifier_search;
 pub mod notify_source;
 pub mod peer;
 pub mod store;
