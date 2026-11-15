@@ -7,7 +7,8 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
 ## 0.0.2 - 2026-11-15
 
 Implements draft-ietf-mimi-protocol-07, draft-ietf-mimi-content-10, draft-ietf-mimi-room-policy-04,
-draft-ietf-mls-extensions-10 and draft-atwood-mimi-provider-auth-00 (DNS-published keys).
+draft-ietf-mls-extensions-10 (AppDataUpdate, the app data dictionary, app components and safe AAD) and
+draft-atwood-mimi-provider-auth-00 (DNS-published keys).
 
 ### Protocol
 - The hub follows protocol-07: wire answers carry the protocol media type; `update` takes an `UpdateRequest` and answers
@@ -34,8 +35,8 @@ draft-ietf-mls-extensions-10 and draft-atwood-mimi-provider-auth-00 (DNS-publish
 ### Provider authentication
 - A peer is authenticated by a client certificate that chains to the configured CA, or, with no certificate, by an
   RFC 9421 signature from a key its provider publishes in DNS (draft-atwood-mimi-provider-auth §5). One gate decides
-  this for every route but the directory; a request with neither is answered 403. Keys are read from the file named by
-  `MIMI_PEER_KEYS`, which a resolver on the host keeps current.
+  this for every route but the directory; a request with neither is answered 403. Peer keys are read from a file
+  (`MIMI_PEER_KEYS`) the operator keeps current from DNS; this release does not query DNS itself.
 - The fingerprint of each client CA is printed at startup.
 
 ### Operating the hub
@@ -45,17 +46,18 @@ draft-ietf-mls-extensions-10 and draft-atwood-mimi-provider-auth-00 (DNS-publish
 - The startup line names the version and the git commit it was built from.
 
 ### Tooling
-- Protocol-07 vectors decode against any -07 implementation; `seed_fixtures` seeds a hub for a visiting implementation.
-- CI refuses attribution trailers in this project's own commit messages; an outside contributor's message is kept as
-  written.
+- Protocol-07 test vectors another implementation can replay; `seed_fixtures` seeds a hub for a visiting
+  implementation.
 - Dependencies: openmls on a main revision (GREASE KeyPackages pass the gate), rusqlite 0.41, rustls 0.23.46,
   rustls-webpki 0.103.16 (RUSTSEC-2026-0382).
 
 ### Open divergences
 DIV-1 (no external commits, by design), DIV-2 (one ciphersuite), DIV-3 (no assets or OHTTP), DIV-4 (identifierQuery
 by opt-in only), DIV-5 (no relay to other providers), DIV-6 (client identity not bound to the channel), DIV-8
-(metadata-only abuse reports), DIV-9 (no franking), DIV-10 (role checks on a Commit's sender), DIV-11, DIV-12, DIV-13,
-DIV-15, DIV-16, DIV-17. See DIVERGENCES.md for each.
+(metadata-only abuse reports), DIV-9 (no franking), DIV-10 (role checks on a Commit's sender), DIV-11 (update fields
+read as opaque), DIV-12 (a Partial GroupInfo payload carries a length prefix), DIV-13 (an exhausted client is answered
+partialSuccess), DIV-15 (two room-policy components are read; role 1 is named "banned"), DIV-16 (any client CA may name
+any provider domain), DIV-17 (content-10 against content-09 peers). See DIVERGENCES.md for each.
 
 ## 0.0.1 - 2026-07-16
 
