@@ -16,6 +16,8 @@
 //!                          (mTLS peer-trust allowlist; see README.md for how to generate one)
 //!   MIMI_ACTIVITY_LOG      optional; 1 prints one line per peer request (method, route template, status); off otherwise
 //!   MIMI_DIRECTORY_BIND_ADDR  optional; a second listener, plain HTTP, that serves the directory document only
+//!   MIMI_PEER_KEYS         optional; JSON file of DNS-published peer keys ("<keyid>._mimi.<domain>": base64), kept
+//!                          current by a job on the host; without it only a client certificate admits a peer
 //!
 //! Startup order is deliberate: mTLS material is read and validated into a `ServerConfig` BEFORE
 //! any durable state is opened. A hub with bad or missing certificates should fail before it
@@ -117,8 +119,14 @@ async fn main() -> anyhow::Result<()> {
     }
     let shared = Arc::new(Mutex::new(provider));
     // The activity line is for the peer-facing listener only, and off unless MIMI_ACTIVITY_LOG is 1.
+    // Every peer request is from an authenticated provider: a client certificate, or a DNS-key signature.
+    let peer_keys = Arc::new(mimi_hubd::signature::PeerKeys::from_file(
+        resolved["MIMI_PEER_KEYS"]
+            .as_deref()
+            .map(std::path::PathBuf::from),
+    ));
     let router = with_activity_log(
-        build_router(shared.clone()),
+        mimi_hubd::provider_auth::with_provider_auth(build_router(shared.clone()), peer_keys),
         activity_enabled(resolved["MIMI_ACTIVITY_LOG"].as_deref()),
         Arc::new(|line| eprintln!("{line}")),
     );

@@ -28,6 +28,8 @@ pub mod http;
 pub mod identifier_search;
 pub mod notify_source;
 pub mod peer;
+pub mod provider_auth;
+pub mod signature;
 pub mod store;
 mod store_canonical;
 pub mod tls;

@@ -269,7 +269,7 @@ packaging changes how you *install* the daemon, never what it *does*.
 
 ## Configuration reference
 
-Nine settings, either as env vars or as keys in a `--config <path>` TOML file (see the two
+Ten settings, either as env vars or as keys in a `--config <path>` TOML file (see the two
 quickstarts above). An env var, if set to a non-empty value, always overrides the same key from
 the file - see [`debian/mimi-hubd.toml.example`](debian/mimi-hubd.toml.example) and
 [`debian/mimi-hubd.env.example`](debian/mimi-hubd.env.example) for filled-in templates.
@@ -279,11 +279,12 @@ the file - see [`debian/mimi-hubd.toml.example`](debian/mimi-hubd.toml.example) 
 | `MIMI_PROVIDER_DOMAIN` | `provider_domain` | yes | none, hard error if unresolved | This hub's own domain, used in the directory response and in `From`-authority checks. |
 | `MIMI_SERVER_CERT` | `server_cert` | yes | none | PEM path, this hub's TLS server certificate (+ chain). |
 | `MIMI_SERVER_KEY` | `server_key` | yes | none | PEM path, this hub's TLS server private key. |
-| `MIMI_CLIENT_CA` | `client_ca` | yes | none | PEM path, the CA that signs client certificates for peers this hub trusts. This is the whole peer-trust model: any peer presenting a cert this CA signed is allowed to call the hub's endpoints. The fingerprint (SHA-256) of each CA in the file is logged at startup, and so is which layer (env/file) supplied it, since it's a statement about the actual trust boundary, not just an ergonomic detail. |
+| `MIMI_CLIENT_CA` | `client_ca` | yes | none | PEM path, the CA that signs client certificates for peers this hub trusts. A peer presenting a cert this CA signed is allowed to call the hub's endpoints; a peer may instead sign its requests with a DNS-published key (`MIMI_PEER_KEYS`, see Peer authentication). The fingerprint (SHA-256) of each CA in the file is logged at startup, and so is which layer (env/file) supplied it, since it's a statement about the actual trust boundary, not just an ergonomic detail. |
 | `MIMI_BIND_ADDR` | `bind_addr` | no | `0.0.0.0:8443` | Listen address. |
 | `MIMI_DB_PATH` | `db_path` | no | `/var/lib/mimi/provider.db` | SQLite file path for durable state. This binary-level default is unchanged by packaging - the shipped `.toml.example` template recommends `/var/lib/mimi-hubd/hub.db` instead (matching the systemd unit's `StateDirectory=`), but that is the template's choice, not a change to this daemon's own default. |
 | `MIMI_PUBLIC_BASE_URL` | `public_base_url` | no | `https://{MIMI_PROVIDER_DOMAIN}` | The `https://` URL the directory's endpoint URLs start at, for a hub behind a reverse proxy, on a port other than 443, or on a dedicated host. Identifiers keep using `MIMI_PROVIDER_DOMAIN`. One trailing `/` is dropped; a query, fragment or non-`https` URL is a hard error at startup. |
 | `MIMI_DIRECTORY_BIND_ADDR` | `directory_bind_addr` | no | none | A second listener, plain HTTP and with no client certificate, that answers `GET /.well-known/mimi-protocol-directory` and nothing else. It is meant to sit behind whatever terminates TLS for the public name. Unset means there is no such listener. |
+| `MIMI_PEER_KEYS` | `peer_keys` | no | none | Path of a JSON file of peers' DNS-published signing keys, `{"<keyid>._mimi.<domain>": "<base64 Ed25519 public key>"}`, an empty value for a revoked key. Re-read when it changes. Without it, no signature verifies and only a client certificate admits a peer. |
 | `MIMI_ACTIVITY_LOG` | `activity_log` | no | off | `1` prints one line per request on the peer-facing listener to stderr: `[mimi-activity] method=POST route=/mimi/pl/update/:room_id status=200`. The route is the template the request matched (`route=unmatched` when none did), so no path, query string, header, certificate or body appears in it. Any other value, or none, leaves it off. The directory-only listener is not logged. |
 
 The daemon never falls back to plain HTTP: a missing certificate, key, or CA path is a hard error
@@ -292,6 +293,23 @@ store is opened, so a bad or missing certificate fails before anything touches d
 unrecognized key in a `--config` file is logged as a warning (not a hard error - a genuinely new,
 forward-compatible key should not break parsing), which also means a *typo'd* key surfaces as a
 diagnostic instead of a silent no-op.
+
+## Peer authentication
+
+Every request on the peer-facing listener is from an authenticated provider, decided in one place for every route but
+the directory (`provider_auth.rs`):
+
+- by a client certificate that chains to `MIMI_CLIENT_CA` and names the provider's domain (protocol-07 §4.1), or
+- with no certificate, by an HTTP Message Signature (RFC 9421) from a key the provider publishes in DNS, as
+  draft-atwood-mimi-provider-auth §5 has it: tag `mimi`, covering `@method`, `@target-uri`, `from` and, when the request
+  has content, `content-digest` (sha-256); `created` within 300 s in the past and 60 s in the future; the key at
+  `<keyid>._mimi.<From domain>`.
+
+A request with neither is answered 403, with nothing more. A signed request's domain is the one its `From` header names,
+so a route's own check of which provider is calling reads the same for both proofs.
+
+The hub does not query DNS. A job on the host resolves the key records through a DNSSEC-validating resolver (an answer
+that does not validate gives no key) and writes the `MIMI_PEER_KEYS` file; the record's TTL bounds how stale it may be.
 
 ## Endpoints
 
