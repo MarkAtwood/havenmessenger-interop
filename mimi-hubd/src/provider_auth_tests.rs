@@ -26,8 +26,9 @@ fn gated(keys: PeerKeys) -> Router {
     with_provider_auth(build_router(provider), Arc::new(keys))
 }
 
-fn key_file() -> (PeerKeys, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("mimi-gate-keys-{}", std::process::id()));
+/// A key file of its own for each test (`test`), so tests running at once never share or remove another's file.
+fn key_file(test: &str) -> (PeerKeys, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("mimi-gate-keys-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("peer_keys.json");
     std::fs::write(&path, format!(r#"{{"s1._mimi.a.example": "{PUBLIC}"}}"#)).unwrap();
@@ -63,7 +64,7 @@ const ROUTES: &[(&str, &str)] = &[
 
 #[tokio::test]
 async fn every_route_but_the_directory_refuses_a_request_with_no_proof() {
-    let (keys, dir) = key_file();
+    let (keys, dir) = key_file("routes");
     let router = gated(keys);
     for (method, path) in ROUTES {
         let response = router
@@ -132,7 +133,7 @@ async fn a_signed_request_reaches_its_route() {
     }
     .encode()
     .unwrap();
-    let (keys, dir) = key_file();
+    let (keys, dir) = key_file("signed");
     let router = gated(keys);
     let reached = router
         .clone()

@@ -13,12 +13,9 @@ const SIGNATURE: &str =
     "mimi=:OBXnNmTPY+Gcxbn+BKcfqCpK7GrkCGO+Ab0/PS956byMzzcArSVEeJWA95WiYjfLJ9vMsEaCRab3geIFr5FpCw==:";
 const URI: &str = "https://b.example/v1/notify/a.example/r/clubhouse";
 
-fn keys(value: &str) -> (PeerKeys, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "mimi-peer-keys-{}-{}",
-        std::process::id(),
-        value.len()
-    ));
+/// A key file of its own for each test (`test`), so tests running at once never share or remove another's file.
+fn keys(test: &str, value: &str) -> (PeerKeys, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("mimi-peer-keys-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("peer_keys.json");
     std::fs::write(&path, format!(r#"{{"s1._mimi.a.example": "{value}"}}"#)).unwrap();
@@ -74,7 +71,7 @@ const PUBLIC: &str = "JrQLj5P/89iXES9+vFgrIy29clF9CC/oPPsw3c5D0bs=";
 
 #[test]
 fn the_drafts_example_authenticates_its_source_domain() {
-    let (keys, dir) = keys(PUBLIC);
+    let (keys, dir) = keys("example", PUBLIC);
     assert_eq!(
         check("POST", &appendix_a(), BODY, at(CREATED), &keys),
         Ok("a.example".to_string())
@@ -84,7 +81,7 @@ fn the_drafts_example_authenticates_its_source_domain() {
 
 #[test]
 fn a_changed_request_authenticates_nobody() {
-    let (keys, dir) = keys(PUBLIC);
+    let (keys, dir) = keys("changed", PUBLIC);
     let now = at(CREATED);
     assert_eq!(
         check("PUT", &appendix_a(), BODY, now, &keys),
@@ -105,7 +102,7 @@ fn a_changed_request_authenticates_nobody() {
 
 #[test]
 fn created_must_be_recent_and_not_ahead() {
-    let (keys, dir) = keys(PUBLIC);
+    let (keys, dir) = keys("created", PUBLIC);
     assert!(check("POST", &appendix_a(), BODY, at(CREATED + 300), &keys).is_ok());
     assert_eq!(
         check("POST", &appendix_a(), BODY, at(CREATED + 301), &keys),
@@ -121,7 +118,7 @@ fn created_must_be_recent_and_not_ahead() {
 
 #[test]
 fn a_revoked_or_unknown_key_verifies_nothing() {
-    let (revoked, dir) = keys("");
+    let (revoked, dir) = keys("revoked", "");
     assert_eq!(
         check("POST", &appendix_a(), BODY, at(CREATED), &revoked),
         Err(Refusal::UnknownKey("s1._mimi.a.example".into()))
@@ -133,7 +130,7 @@ fn a_revoked_or_unknown_key_verifies_nothing() {
 
 #[test]
 fn the_required_components_must_be_covered() {
-    let (keys, dir) = keys(PUBLIC);
+    let (keys, dir) = keys("required", PUBLIC);
     let mut no_digest = appendix_a();
     no_digest[2] = (
         "signature-input",
