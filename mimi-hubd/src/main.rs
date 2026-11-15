@@ -146,8 +146,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     eprintln!(
-        "[mimi-hubd {}] domain={domain} db={db_path} listening (mTLS) on {bind}",
-        env!("CARGO_PKG_VERSION")
+        "[mimi-hubd {} ({})] domain={domain} db={db_path} listening (mTLS) on {bind}",
+        env!("CARGO_PKG_VERSION"),
+        env!("MIMI_HUBD_GIT_COMMIT")
     );
     tls::serve_with_graceful_shutdown(bind, router, tls_config, Duration::from_secs(30)).await?;
     Ok(())
