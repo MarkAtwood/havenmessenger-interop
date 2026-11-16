@@ -279,7 +279,7 @@ async fn a_role_list_beside_a_participant_change_is_refused() {
     assert!(
         matches!(
             &answer,
-            UpdateRoomResponse::InvalidProposal { error_description, .. }
+            UpdateRoomResponse::NotAllowed { error_description }
                 if error_description.contains("room-policy-04 §3")
         ),
         "{answer:?}"

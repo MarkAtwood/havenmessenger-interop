@@ -662,7 +662,8 @@ const TWO_PARTICIPANT_LIST_UPDATES: &str =
     "more than one participant-list update in one Commit (this hub reads one)";
 const TWO_POLICY_CHANGES_OF_ONE_KIND: &str =
     "two changes of the same room-policy component in one Commit";
-const ROLE_LIST_BESIDE_PARTICIPANT_CHANGE: &str =
+/// The room-policy-04 §3 rule: a role list may not share a Commit with a participant-list change.
+pub const ROLE_LIST_BESIDE_PARTICIPANT_CHANGE: &str =
     "a role list change may not share a Commit with a participant-list change (room-policy-04 §3)";
 
 /// When [`decode_commit_proposals`] refused a Commit for the changes it carries together, the reason

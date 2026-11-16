@@ -244,10 +244,15 @@ without needing that machinery in the first place.
   is an `UpdateRoomResponse` in a 200: `success` with the hub's acceptance time in milliseconds;
   `notAllowed` for a room this hub does not host, a bundle whose Welcome or GroupInfo is under
   another ciphersuite, or a store limit (the participant cap), with the same bytes for each, so a
-  refusal does not say which of them applied; `invalidProposal` for a body that is not an
-  `UpdateRequest`, a bundle of proposals that is not a leave, an unrecognized proposal type, or
-  an update that does not fit the room, with an empty `invalidProposals` list except where a
-  Commit's references are at fault (above), which it names. `success` for a bundle of proposals
+  refusal does not say which of them applied; `notAllowed` with the reason in its description when
+  the room's policy refuses the change (protocol-07 §5.3: "some type of policy or authorization prevented" it): a
+  role the policy does not define, a role list or base policy that does not validate, a base policy before any roles,
+  or a role list beside a participant-list change (room-policy-04 §3); `invalidProposal` for a body that is not an
+  `UpdateRequest`, a bundle of proposals that is not a leave, an unrecognized proposal type, a proposal that does not
+  decode, or an update that does not fit the room, with an empty `invalidProposals` list except where a
+  Commit's references are at fault (above), which it names. The list stays empty for a proposal the Commit carries by
+  value: `invalidProposals` lists `ProposalRef`s, and RFC 9420 §5.2 computes a `ProposalRef` only for a proposal sent
+  as its own message, so an inline proposal has none to name. Protocol-07 §5.3 does not say what to answer then. `success` for a bundle of proposals
   means they are held for the next Commit. The hub checks that the room URI is under its own
   domain, not that the room exists, and answers `invalidProposal` or `success` for a room it
   hosts, so a peer on the allowlist can learn a room's participant count from those answers.

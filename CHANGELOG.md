@@ -13,6 +13,10 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
   without defining it is still valid.
 - A Commit's participant-list change is checked against the room's policy: every role it puts a user in must be one
   the policy defines. Who made a role change is not checked yet (DIVERGENCES, DIV-15).
+- An update the room's policy refuses is answered `notAllowed` with the reason, no longer `invalidProposal` with an
+  empty list: a role the policy does not define, a role list or base policy that does not validate, a base policy before
+  any roles, or a role list beside a participant-list change. Malformed proposals stay `invalidProposal`. The recorded
+  answer of vector `up-x6-base-room-policy-before-roles` is now `notAllowed`.
 - `docs/problems.md` names the problem types mimi-hubd answers with (RFC 9457), starting with
   `remote-room-not-delivered`.
 - Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.

@@ -75,8 +75,13 @@ fn role_of(p: &SharedProvider, user: &str) -> Option<u32> {
         .and_then(|row| row.role_index)
 }
 
+/// Refused by the room's policy: protocol-07 §5.3 `notAllowed`, with the words that say why.
 fn is_refused(answer: &UpdateRoomResponse) -> bool {
-    matches!(answer, UpdateRoomResponse::InvalidProposal { .. })
+    matches!(
+        answer,
+        UpdateRoomResponse::NotAllowed { error_description }
+            if error_description.contains("the room's policy does not define")
+    )
 }
 
 #[tokio::test]

@@ -53,6 +53,14 @@ fn hosted(p: &SharedProvider) {
         .unwrap();
 }
 
+/// A refusal by the room's policy: protocol-07 §5.3 `notAllowed`.
+fn assert_not_allowed(answer: &UpdateRoomResponse) {
+    assert!(
+        matches!(answer, UpdateRoomResponse::NotAllowed { .. }),
+        "{answer:?}"
+    );
+}
+
 fn assert_invalid(answer: &UpdateRoomResponse) {
     assert!(
         matches!(answer, UpdateRoomResponse::InvalidProposal { .. }),
@@ -149,7 +157,7 @@ async fn a_roles_update_keeps_the_stored_base() {
 }
 
 #[tokio::test]
-async fn a_base_update_for_a_room_with_no_roles_is_invalid_and_stores_nothing() {
+async fn a_base_update_for_a_room_with_no_roles_is_refused_by_policy_and_stores_nothing() {
     let (router, p) = app();
     hosted(&p);
     let answer = send(
@@ -158,7 +166,7 @@ async fn a_base_update_for_a_room_with_no_roles_is_invalid_and_stores_nothing() 
         &encode_base_room_policy(&BaseRoomPolicy::default(), None),
     )
     .await;
-    assert_invalid(&answer);
+    assert_not_allowed(&answer);
     assert_eq!(stored(&p), None);
 }
 
@@ -199,7 +207,7 @@ async fn an_update_that_does_not_parse_is_invalid_and_changes_nothing() {
 }
 
 #[tokio::test]
-async fn a_policy_that_does_not_validate_is_invalid_and_changes_nothing() {
+async fn a_policy_that_does_not_validate_is_refused_by_policy_and_changes_nothing() {
     // Role 1 is reserved for "banned".
     let (router, p) = app();
     hosted(&p);
@@ -210,7 +218,7 @@ async fn a_policy_that_does_not_validate_is_invalid_and_changes_nothing() {
     p.lock().unwrap().set_room_policy(ROOM, &kept, 1).unwrap();
     let bad = vec![role(1, "gone", vec![])];
     let answer = send(router, ROLES_LIST_COMPONENT_ID, &encode_role_data(&bad)).await;
-    assert_invalid(&answer);
+    assert_not_allowed(&answer);
     assert_eq!(stored(&p), Some(kept.clone()));
 
     // A fixed-membership base is refused while a stored role may add participants.
@@ -227,6 +235,6 @@ async fn a_policy_that_does_not_validate_is_invalid_and_changes_nothing() {
         &encode_base_room_policy(&fixed, None),
     )
     .await;
-    assert_invalid(&answer);
+    assert_not_allowed(&answer);
     assert_eq!(stored(&p), Some(kept));
 }

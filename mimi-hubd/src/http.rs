@@ -737,9 +737,11 @@ async fn update_wire(
             error_description: crate::UpdateRefusal::WrongEpoch(current_epoch).to_string(),
             current_epoch,
         },
-        Err(refusal @ crate::UpdateRefusal::Limit(_)) => UpdateRoomResponse::NotAllowed {
-            error_description: refusal.to_string(),
-        },
+        Err(refusal @ (crate::UpdateRefusal::Limit(_) | crate::UpdateRefusal::Policy(_))) => {
+            UpdateRoomResponse::NotAllowed {
+                error_description: refusal.to_string(),
+            }
+        }
         Err(crate::UpdateRefusal::InvalidProposals(why, references)) => {
             UpdateRoomResponse::InvalidProposal {
                 error_description: why.to_string(),
