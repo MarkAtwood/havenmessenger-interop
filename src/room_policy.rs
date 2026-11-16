@@ -116,7 +116,7 @@ impl RoomPolicy {
     /// What a user can be moved into: out of the room (role 0) or a role the list defines. PR #51: "to use the canBan
     /// and canUnban capabilities, a role with role_index = 1 needs to exist", so a ban into an undefined role 1 is
     /// refused even though the list naming it is valid.
-    fn role_can_be_held(&self, role_index: u32) -> bool {
+    pub fn role_can_be_held(&self, role_index: u32) -> bool {
         role_index == ROLE_NON_PARTICIPANT || self.role(role_index).is_some()
     }
 

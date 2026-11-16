@@ -353,10 +353,15 @@ list sent first sets the roles and leaves the base policy at the draft's default
 named `banned` is refused: room-policy-04 says the banned role "always has role_index = 1 and role_name = banned" and
 that it "does not have to exist", and this hub reads that as fixing the name of whatever role holds index 1.
 
-What the hub keeps of them is what it enforces. Of a role: its index, its name, its
-`authorized_role_changes`, and the capabilities `canAddParticipant` (`0x0000`),
-`canRemoveParticipant` (`0x0001`), `canBan` (`0x000a`), `canKick` (`0x000c`), `canChangeUserRole`
-(`0x000f`) and `canSendMessage` (`0x0100`). The other capability values (uploads, calls, room attributes
+What the hub keeps of them: of a role, its index, its name, its `authorized_role_changes`, and the capabilities
+`canAddParticipant` (`0x0000`), `canRemoveParticipant` (`0x0001`), `canBan` (`0x000a`), `canKick` (`0x000c`),
+`canChangeUserRole` (`0x000f`) and `canSendMessage` (`0x0100`). What it enforces of them on a Commit is narrower:
+every role a participant-list change puts a user in must be one the room's policy defines (or 0, out of the room), so a
+ban into role 1 is refused while the list does not define role 1. **Who made a role change is not checked:** `canBan`,
+`canKick`, `canChangeUserRole`, `canAddParticipant`, `canRemoveParticipant` and the committer's
+`authorized_role_changes` are not enforced on a Commit, because the Commit's sender is a leaf index and this hub keeps
+no ratchet tree to map it to a member. They will be once it keeps one. A room with no policy is not checked at all.
+`canSendMessage` is enforced where the hub sees the sender, on `submitMessage`, by the sender's role (§8.3). The other capability values (uploads, calls, room attributes
 and the rest of the registry, which is open to additions) are read for their shape and not carried, so a
 role that lists them is accepted. The description and the four participant-count constraints are
 read and not kept. Of a base policy: `fixed_membership`, `parent_dependant`, `max_clients`,

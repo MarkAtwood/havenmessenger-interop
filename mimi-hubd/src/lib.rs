@@ -1075,6 +1075,7 @@ impl Provider {
             None
         };
         if let Some(update) = &participants {
+            self.check_roles_held(room_uri, policy.as_ref(), update)?;
             self.apply_participant_list_update(room_uri, update, now_unix)?;
         }
         if let Some(policy) = policy {
@@ -1087,6 +1088,50 @@ impl Provider {
                 .map_err(|e| store_refusal(&e)),
             None => Ok(()),
         }
+    }
+
+    /// Every role a participant-list change puts a user in is one the room's policy defines (or 0, out of the room):
+    /// the policy this Commit ends with when it carries one, else the stored one. A ban into role 1 is therefore refused
+    /// while the list does not define role 1 (room-policy PR #51). A room with no policy has no roles to check against
+    /// and is not checked. Who made the change is not checked here: the Commit's sender is a leaf index, and this hub
+    /// keeps no ratchet tree to map it to a member (DIVERGENCES, DIV-15).
+    fn check_roles_held(
+        &self,
+        room_uri: &str,
+        ending_policy: Option<&RoomPolicy>,
+        update: &ParticipantListUpdate,
+    ) -> Result<(), UpdateRefusal> {
+        let stored;
+        let policy = match ending_policy {
+            Some(policy) => policy,
+            None => {
+                stored = self
+                    .room_policy(room_uri)
+                    .map_err(|_| UpdateRefusal::Store)?;
+                match &stored {
+                    Some(policy) => policy,
+                    None => return Ok(()),
+                }
+            }
+        };
+        let roles = update
+            .added_participants
+            .iter()
+            .map(|added| added.role_index)
+            .chain(
+                update
+                    .changed_role_participants
+                    .iter()
+                    .map(|changed| changed.role_index),
+            );
+        for role in roles {
+            if !policy.role_can_be_held(role) {
+                return Err(UpdateRefusal::Invalid(
+                    "a participant is given a role the room's policy does not define",
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The room's metadata as its last accepted update sent it (protocol-07 §10), if it has any.

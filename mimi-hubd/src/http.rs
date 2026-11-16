@@ -1004,6 +1004,9 @@ mod update_add_tests;
 #[path = "http_update_leave_tests.rs"]
 mod update_leave_tests;
 #[cfg(test)]
+#[path = "http_update_role_tests.rs"]
+mod update_role_tests;
+#[cfg(test)]
 #[path = "http_update_tests.rs"]
 mod update_tests;
 

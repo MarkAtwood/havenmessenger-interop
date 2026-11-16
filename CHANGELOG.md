@@ -11,6 +11,8 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
   is still queued and answered 201.
 - A ban into role 1 is refused unless the room's role list defines role 1 (room-policy #51); a list that names role 1
   without defining it is still valid.
+- A Commit's participant-list change is checked against the room's policy: every role it puts a user in must be one
+  the policy defines. Who made a role change is not checked yet (DIVERGENCES, DIV-15).
 - `docs/problems.md` names the problem types mimi-hubd answers with (RFC 9457), starting with
   `remote-room-not-delivered`.
 - Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.
