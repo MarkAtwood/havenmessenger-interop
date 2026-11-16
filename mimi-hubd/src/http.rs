@@ -532,14 +532,16 @@ fn accept_notify(p: &SharedProvider, source: &VerifiedNotifySource, body: &[u8])
 /// the identical dedup-by-content-hash store call. Rejecting undecodable bodies with 400, rather than treating them as
 /// valid-but-different content the way `submit_notify` treats any other byte string, keeps the wire lane to the
 /// protocol it speaks. A Welcome in the fan-out is queued for each local user whose published KeyPackage it names
-/// (`Provider::deliver_notified_welcome`); application messages and Commits for a room this provider does not host are
-/// accepted and not stored, since it keeps no membership for such a room.
+/// (`Provider::deliver_notified_welcome`). Anything else (an application message, a Commit, a proposal) is for a room
+/// another hub hosts, which this hub does not deliver yet, so it is refused with 422 and the `remote-room-not-delivered`
+/// problem (`docs/problems.md`) rather than accepted and dropped. The refusal comes before the dedup ledger records the
+/// body, so sending it again is refused again: only what was accepted can be a duplicate answered 201.
 async fn notify_wire(
     State(p): State<SharedProvider>,
     Path(room_id): Path<String>,
     peer: Option<Extension<PeerCert>>,
     body: Bytes,
-) -> StatusCode {
+) -> Response {
     let source = match verify_notify_source(&room_id, peer.as_ref()) {
         Ok(source) => source,
         Err(status) => {
@@ -551,7 +553,7 @@ async fn notify_wire(
                     "refused (the path is not a room URI)"
                 }
             );
-            return status;
+            return status.into_response();
         }
     };
     let fanout = match mimi_core::protocol_wire::FanoutMessage::decode(&body) {
@@ -559,9 +561,16 @@ async fn notify_wire(
         Err(error) => {
             // The decoder's own words: a field of the message and a codec value, never a URI or a user.
             eprintln!("[mimi-hubd] notify: refused (not a FanoutMessage: {error})");
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
     };
+    if matches!(
+        mimi_core::gate::welcome_new_members(&fanout.message_and_tail),
+        Err(mimi_core::gate::GateError::NotAWelcome)
+    ) {
+        eprintln!("[mimi-hubd] notify: 422 (not a Welcome; messages for rooms on other hubs are not delivered)");
+        return crate::problem::REMOTE_ROOM_NOT_DELIVERED.response();
+    }
     let g = lock(&p);
     let status = match g.submit_notify(&source, &body, now_unix()) {
         Ok(NotifyOutcome::Process) => {
@@ -571,7 +580,7 @@ async fn notify_wire(
                 Ok(queued) => {
                     eprintln!("[mimi-hubd] notify: Welcome queued for {queued} local user(s)")
                 }
-                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
             StatusCode::CREATED
         }
@@ -579,7 +588,7 @@ async fn notify_wire(
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     eprintln!("[mimi-hubd] notify: {status}");
-    status
+    status.into_response()
 }
 
 #[derive(Deserialize)]

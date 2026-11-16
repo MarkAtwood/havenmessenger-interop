@@ -28,6 +28,7 @@ pub mod http;
 pub mod identifier_search;
 pub mod notify_source;
 pub mod peer;
+pub mod problem;
 pub mod provider_auth;
 pub mod signature;
 pub mod store;

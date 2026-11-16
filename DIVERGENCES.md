@@ -335,7 +335,8 @@ private type `0xF7A0` (`mimiParticipantList`). Both carry the draft's `Participa
 encoding and are applied the same way. The openmls release this crate pins (0.9.2) is built
 without its `extensions-draft` feature and cannot read an AppDataUpdate, so `commit_wire` reads
 the proposals window itself and rewrites an AppDataUpdate to the `0xF7A0` form for reading only; the
-bytes of the Commit are never changed. `/notify` checks a fanned-out Commit or proposal the same way.
+bytes of the Commit are never changed. A fanned-out Commit or proposal reaching `/notify` is refused before it is read
+(see below).
 
 Protocol-07 §5.3 sends a room-policy change as an AppDataUpdate for the room policy components of
 room-policy-04, with values `0x0024` to `0x0030` suggested and not yet registered. This hub reads two:
@@ -383,8 +384,11 @@ Where room-policy-04 leaves a rule open, this is what the hub does. The issues a
 `ietf-wg-mimi/mimi-room-policy`.
 
 - [#33](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/33), rules for a valid role list: a repeated
-  `role_index`, a transition that names a role outside the list (0 and 1 are always defined), and a minimum
-  above its maximum are refused. A capability listed twice counts once. Two `authorized_role_changes`
+  `role_index`, a transition that names a role outside the list, and a minimum above its maximum are refused.
+  Only role 0 is always defined: role 1, the banned role, exists only when the list defines it, as
+  [#51](https://github.com/ietf-wg-mimi/mimi-room-policy/pull/51) says ("to use the canBan and canUnban capabilities,
+  a role with role_index = 1 needs to exist"), so a ban, or any change into a role the list does not define, is
+  refused. A capability listed twice counts once. Two `authorized_role_changes`
   entries with the same `from_role_index` are both honoured: a change is authorized when any entry permits it.
 - [#31](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/31), when role constraints are checked: the four
   participant-count constraints are read and not kept, so the hub enforces them at no point in a commit.
@@ -423,8 +427,14 @@ read. The same question gates the JSON-lane `/mimi/v1/notify`, which takes a `ro
 
 What a `/notify` delivers: a Welcome is queued for each local user whose published KeyPackage it names (this provider
 records each KeyPackage's `KeyPackageRef` when it is published, so the recipient comes from its own map and never from
-the peer). An application message or a Commit for a room this provider does not host is accepted (201) and not stored:
-the provider keeps no membership for a room it does not host, so it cannot say which local users the message is for.
+the peer). Anything else (an application message, a Commit, a proposal) is for a room another hub hosts, and this
+provider does not deliver those yet: it keeps no membership for such a room, so it cannot say which local users the
+message is for. It refuses them with 422 and the RFC 9457 problem `remote-room-not-delivered`
+([docs/problems.md](docs/problems.md#remote-room-not-delivered)) rather than answering 201 for a message it would not
+deliver, and the sender should drop the delivery rather than retry it. The refusal is decided before the dedup ledger
+records the body, so a resend of a refused message is refused again; §5.5's "MUST return 201" for a duplicate covers a
+duplicate of what was accepted. The JSON compatibility lane `/mimi/v1/notify` still records any body it is sent and
+answers 201; it delivers nothing.
 
 - **What this does not bind.** The check says which names a certificate carries. It does not say
   which names the CA that signed it may issue. Every CA in the client bundle can issue a certificate

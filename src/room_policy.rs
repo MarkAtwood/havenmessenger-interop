@@ -107,8 +107,11 @@ impl RoomPolicy {
         self.roles.iter().find(|r| r.role_index == role_index)
     }
 
+    /// Role 0 (not a participant) is always there. Every other role, the banned role 1 included, exists only when the
+    /// list defines it: room-policy PR #51, "to use the canBan and canUnban capabilities, a role with role_index = 1
+    /// needs to exist".
     fn role_is_defined_or_reserved(&self, role_index: u32) -> bool {
-        matches!(role_index, ROLE_NON_PARTICIPANT | ROLE_BANNED) || self.role(role_index).is_some()
+        role_index == ROLE_NON_PARTICIPANT || self.role(role_index).is_some()
     }
 
     /// P5: does the member's role allow sending a message? Reserved roles (non-participant/banned) never
@@ -193,6 +196,13 @@ impl RoomPolicy {
         let actor = self
             .role(actor_role_index)
             .ok_or(RoomPolicyError::ActorRoleUndefined(actor_role_index))?;
+        // A user can only be moved into a role the list defines (or out of the room, role 0). This also covers a stored
+        // policy accepted before role 1 had to be defined to be used.
+        if !self.role_is_defined_or_reserved(to_role) {
+            return Err(RoomPolicyError::RoleChangeDenied(format!(
+                "the {from_role}->{to_role} change names role {to_role}, which this room's policy does not define"
+            )));
+        }
         // the capability the transition requires
         let needed = if from_role == ROLE_NON_PARTICIPANT {
             Capability::AddParticipant
@@ -347,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn p1_validate_rejects_undefined_transition_roles_but_allows_reserved_roles() {
+    fn p1_validate_rejects_undefined_transition_roles_and_only_role_0_is_always_defined() {
         let mut undefined_target = sample_policy();
         undefined_target.roles[2].authorized_role_changes[0].target_role_indexes = vec![99];
         assert!(
@@ -388,9 +398,25 @@ mod tests {
             ],
         };
         assert!(
-            founding_shaped.validate().is_ok(),
-            "reserved roles do not need role definitions"
+            founding_shaped.validate().is_err(),
+            "a ban into role 1 needs role 1 defined (room-policy PR #51); only role 0 is always there"
         );
+        // A stored policy accepted before that rule still cannot move anyone into the undefined role.
+        assert!(
+            founding_shaped
+                .authorize_role_change(2, 3, ROLE_BANNED)
+                .is_err(),
+            "a change into an undefined role 1 is refused"
+        );
+        let mut with_banned = founding_shaped.clone();
+        with_banned
+            .roles
+            .push(member_role(ROLE_BANNED, "banned", vec![]));
+        assert!(
+            with_banned.validate().is_ok(),
+            "role 0 needs no definition, and a defined role 1 may be banned into"
+        );
+        assert!(with_banned.authorize_role_change(2, 3, ROLE_BANNED).is_ok());
     }
 
     #[test]
