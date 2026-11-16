@@ -17,6 +17,8 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
   empty list: a role the policy does not define, a role list or base policy that does not validate, a base policy before
   any roles, or a role list beside a participant-list change. Malformed proposals stay `invalidProposal`. The recorded
   answer of vector `up-x6-base-room-policy-before-roles` is now `notAllowed`.
+- DIVERGENCES says that the base policy's membership limits (`fixed_membership` growth, `max_clients`, `max_users`) are
+  kept but not enforced on a Commit.
 - `docs/problems.md` names the problem types mimi-hubd answers with (RFC 9457), starting with
   `remote-room-not-delivered`.
 - Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.

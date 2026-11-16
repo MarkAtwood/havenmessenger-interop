@@ -370,7 +370,9 @@ no ratchet tree to map it to a member. They will be once it keeps one. A room wi
 and the rest of the registry, which is open to additions) are read for their shape and not carried, so a
 role that lists them is accepted. The description and the four participant-count constraints are
 read and not kept. Of a base policy: `fixed_membership`, `parent_dependant`, `max_clients`,
-`max_users` and `discoverable`; the rest is read and not kept. A value is refused when it does not end
+`max_users` and `discoverable`; the rest is read and not kept. **Kept is not enforced for the membership limits:** a
+Commit that grows a `fixed_membership` room, or takes a room past `max_clients` or `max_users`, is not refused; the
+hub checks only that a fixed-membership room's roles hold no `canAddParticipant` (room-policy-04 §5). A value is refused when it does not end
 where its length says, when a length or a count passes a bound (256 roles, 512 capabilities, 1 KiB of
 text), when a flag is neither 0 nor 1, when a role index repeats, when a minimum participant count is
 above its maximum, when a parent-dependent room names no parent or any other names one, or when the
