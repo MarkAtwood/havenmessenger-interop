@@ -69,17 +69,17 @@ pub const fn capability_to_wire(capability: Capability) -> u16 {
     }
 }
 
-fn refuse(what: &'static str, detail: impl std::fmt::Display) -> RoomPolicyError {
+pub(crate) fn refuse(what: &'static str, detail: impl std::fmt::Display) -> RoomPolicyError {
     RoomPolicyError::Wire(format!("{what}: {detail}"))
 }
 
 /// A cursor over bytes that are all peer-controlled: nothing is read past what was declared.
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     rest: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
-    const fn new(rest: &'a [u8]) -> Self {
+    pub(crate) const fn new(rest: &'a [u8]) -> Self {
         Self { rest }
     }
 
@@ -124,7 +124,11 @@ impl<'a> Reader<'a> {
     }
 
     /// A `<V>` run: its content, as a reader of its own, bounded by the declared length before anything is read.
-    fn run(&mut self, what: &'static str, limit: usize) -> Result<Self, RoomPolicyError> {
+    pub(crate) fn run(
+        &mut self,
+        what: &'static str,
+        limit: usize,
+    ) -> Result<Self, RoomPolicyError> {
         let (bounded, rest) =
             bounded_run_input(self.rest, what, limit.min(MAX_RUN_AGGREGATE_BYTES))
                 .map_err(|e| refuse(what, e))?;
@@ -139,7 +143,11 @@ impl<'a> Reader<'a> {
     }
 
     /// `opaque x<V>`: the bytes.
-    fn opaque(&mut self, what: &'static str, limit: usize) -> Result<&'a [u8], RoomPolicyError> {
+    pub(crate) fn opaque(
+        &mut self,
+        what: &'static str,
+        limit: usize,
+    ) -> Result<&'a [u8], RoomPolicyError> {
         let bytes = self.run(what, limit)?.rest;
         if bytes.len() > limit {
             return Err(refuse(
@@ -163,7 +171,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    const fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.rest.is_empty()
     }
 }

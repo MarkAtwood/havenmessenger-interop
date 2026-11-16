@@ -104,21 +104,34 @@ def check_message(
     return hits
 
 
+# The guard holds this project's own commits to its message register. A commit an outside
+# contributor wrote is theirs: its message, trailers included, is kept as they wrote it and not
+# checked here. Own commits are the ones authored under the project's identity.
+OWN_AUTHOR_EMAILS = {"dev@havenmessenger.com"}
+
+
+def is_own_commit(author_email: str) -> bool:
+    return author_email.strip().lower() in OWN_AUTHOR_EMAILS
+
+
 def messages_in_range(from_ref: str | None, to_ref: str) -> list[tuple[str, str]]:
+    """The (sha, message) of each own commit in the range; other authors' commits are left out."""
     root = repo_root()
     if from_ref is None:
         # No remote-side reference available - check just the tip commit rather than walking its
         # entire ancestry (which may predate this guard and isn't what's newly being pushed).
-        args = ["git", "log", "-1", "--format=%H%x00%B%x03", to_ref]
+        args = ["git", "log", "-1", "--format=%H%x00%ae%x00%B%x03", to_ref]
     else:
-        args = ["git", "log", "--format=%H%x00%B%x03", f"{from_ref}..{to_ref}"]
+        args = ["git", "log", "--format=%H%x00%ae%x00%B%x03", f"{from_ref}..{to_ref}"]
     out = subprocess.run(args, cwd=root, capture_output=True, text=True, check=True).stdout
     result = []
     for chunk in out.split("\x03"):
         if not chunk.strip():
             continue
-        sha, _, msg = chunk.partition("\x00")
-        result.append((sha.strip(), msg))
+        sha, _, rest = chunk.partition("\x00")
+        author_email, _, msg = rest.partition("\x00")
+        if is_own_commit(author_email):
+            result.append((sha.strip(), msg))
     return result
 
 
@@ -262,6 +275,12 @@ def run_self_test() -> int:
         )
     else:
         print("self-test: escape token is a run_prepush-level skip, not a check_message blind spot")
+
+    if is_own_commit("Dev@HavenMessenger.com") and not is_own_commit("contributor@example.org"):
+        print("self-test: own commits are checked, an outside contributor's are left as written")
+    else:
+        ok = False
+        print("SELF-TEST FAILED: the own-author test misreads an author", file=sys.stderr)
 
     return 0 if ok else 1
 

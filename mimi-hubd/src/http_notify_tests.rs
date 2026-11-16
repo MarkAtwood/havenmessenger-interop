@@ -10,7 +10,8 @@ use axum::{
 use mimi_core::protocol_wire::FanoutMessage;
 use tower::ServiceExt;
 
-use super::tests::{app, real_mls_envelope_bytes};
+use super::notify_welcome_tests::welcome_adding;
+use super::tests::{app, real_keypackage_for, real_mls_envelope_bytes};
 use crate::http::SharedProvider;
 use crate::peer::{PeerCert, PeerIdentity};
 use crate::tls::certs_from_pem;
@@ -39,20 +40,26 @@ fn peer(names: &[&str], common_name: &str) -> PeerCert {
     PeerCert(Some(PeerIdentity::new(chain[0].clone().into_owned())))
 }
 
-/// One fanout body for the whole run: a fresh MLS message each call would differ in every byte, and these rows ask
-/// whether a particular body reached the store.
+/// One fanout body for the whole run, a Welcome (the one kind this hub accepts from another room's hub): a fresh MLS
+/// message each call would differ in every byte, and these rows ask whether a particular body reached the store.
 fn body() -> Vec<u8> {
     static BODY: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     BODY.get_or_init(|| {
-        FanoutMessage {
-            protocol: mimi_core::protocol_wire::PROTOCOL_MLS10,
-            timestamp: 1,
-            message_and_tail: real_mls_envelope_bytes(),
-        }
-        .encode()
-        .unwrap()
+        fanout(welcome_adding(&real_keypackage_for(
+            b"mimi://elsewhere.example/u/dana",
+        )))
     })
     .clone()
+}
+
+fn fanout(message_and_tail: Vec<u8>) -> Vec<u8> {
+    FanoutMessage {
+        protocol: mimi_core::protocol_wire::PROTOCOL_MLS10,
+        timestamp: 1,
+        message_and_tail,
+    }
+    .encode()
+    .unwrap()
 }
 
 async fn notify(
@@ -468,4 +475,55 @@ async fn over_a_real_connection_the_certificate_the_peer_presented_decides() {
     .await;
     assert!(accepted.contains("201"), "{accepted}");
     assert!(!nothing_was_stored(&p));
+}
+
+/// The hub of the room sends `body` on the wire lane; the answer whole.
+async fn notify_from_the_hub(router: Router, body: Vec<u8>) -> axum::response::Response {
+    router
+        .layer(Extension(peer(&["hub.example"], "hub")))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/mimi/pl/notify/{}", encoded(ROOM)))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_message_for_a_room_on_another_hub_is_refused_with_the_problem_and_not_recorded() {
+    let (router, p) = app();
+    let response = notify_from_the_hub(router.clone(), fanout(real_mls_envelope_bytes())).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        crate::problem::PROBLEM_JSON
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let problem: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        problem["type"],
+        crate::problem::REMOTE_ROOM_NOT_DELIVERED.uri()
+    );
+    assert_eq!(problem["status"], 422);
+    assert!(
+        nothing_was_stored(&p),
+        "a refused message reached the dedup ledger"
+    );
+    // Sent again, it is refused again: only what was accepted can be a duplicate answered 201.
+    let again = notify_from_the_hub(router, fanout(real_mls_envelope_bytes())).await;
+    assert_eq!(again.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn a_welcome_from_the_hub_is_still_accepted_and_its_duplicate_still_201() {
+    let (router, _p) = app();
+    for _ in 0..2 {
+        let response = notify_from_the_hub(router.clone(), body()).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
 }

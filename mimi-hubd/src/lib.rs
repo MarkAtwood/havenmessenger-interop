@@ -25,8 +25,12 @@
 pub mod activity;
 pub mod enroll;
 pub mod http;
+pub mod identifier_search;
 pub mod notify_source;
 pub mod peer;
+pub mod problem;
+pub mod provider_auth;
+pub mod signature;
 pub mod store;
 mod store_canonical;
 pub mod tls;
@@ -93,6 +97,11 @@ pub enum UpdateRefusal {
     InvalidProposals(&'static str, Vec<Vec<u8>>),
     /// The proposals are not of the room's current epoch, which is this one.
     WrongEpoch(u64),
+    /// The room's policy refuses the change: a role the policy does not define, a role list or base policy that is not
+    /// valid, a base policy before any roles, or a role list beside a participant-list change (room-policy-04 §3).
+    /// Answered `notAllowed` with these words: protocol-07 §5.3, "some type of policy or authorization prevented the hub
+    /// provider from accepting".
+    Policy(&'static str),
     /// A peer that may leave the room asked for more than the hub holds for one room's next Commit. Answered
     /// `notAllowed` with these words; only a provider of the room's participants reaches it, so it says nothing about
     /// whether a room exists.
@@ -105,9 +114,10 @@ impl std::fmt::Display for UpdateRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotAllowed => f.write_str("the hub did not accept this update"),
-            Self::Invalid(why) | Self::InvalidProposals(why, _) | Self::Limit(why) => {
-                f.write_str(why)
-            }
+            Self::Invalid(why)
+            | Self::InvalidProposals(why, _)
+            | Self::Limit(why)
+            | Self::Policy(why) => f.write_str(why),
             Self::WrongEpoch(_) => f.write_str("this update is not for the room's current epoch"),
             Self::Store => f.write_str("the hub could not store this update"),
         }
@@ -115,6 +125,16 @@ impl std::fmt::Display for UpdateRefusal {
 }
 
 impl std::error::Error for UpdateRefusal {}
+
+/// What a Commit refused for the changes it carries together is answered: the room-policy rule (a role list beside a
+/// participant-list change, room-policy-04 §3) as a policy refusal, this hub's own reading limits as not readable.
+fn change_refusal(reason: &'static str) -> UpdateRefusal {
+    if reason == mimi_core::commit_wire::ROLE_LIST_BESIDE_PARTICIPANT_CHANGE {
+        UpdateRefusal::Policy(reason)
+    } else {
+        UpdateRefusal::Invalid(reason)
+    }
+}
 
 /// A store error is the hub's own failure when it comes from SQLite; any other error the store raises is a limit it
 /// enforces on the request (the participant cap).
@@ -883,8 +903,9 @@ impl Provider {
     ) -> Result<(), UpdateRefusal> {
         // A Commit refused for the changes it carries together says which rule refused it; any other is unreadable.
         let mut commit = decode_commit_proposals(commit_bytes).map_err(|error| {
-            UpdateRefusal::Invalid(
-                changes_refusal(&error).unwrap_or("the commit is not one this hub can read"),
+            changes_refusal(&error).map_or(
+                UpdateRefusal::Invalid("the commit is not one this hub can read"),
+                change_refusal,
             )
         })?;
         // A KeyPackage the gate refuses (a foreign suite, a bad signature) refuses the whole Commit before anything changes.
@@ -968,7 +989,7 @@ impl Provider {
                 ReadProposal::Change(change) => commit.updates.push(change),
             }
         }
-        check_changes(&commit.updates).map_err(UpdateRefusal::Invalid)
+        check_changes(&commit.updates).map_err(change_refusal)
     }
 
     /// Apply a Commit whose references are already read in: its participant-list change, its room-policy change, or one
@@ -983,12 +1004,13 @@ impl Provider {
     ) -> Result<(), UpdateRefusal> {
         if commit.updates.is_empty() {
             return Err(UpdateRefusal::Invalid(
-                "the Commit carries no participant-list or room-policy change",
+                "the Commit carries no participant-list, room-policy or room-metadata change",
             ));
         }
         let mut participants = None;
         let mut roles = None;
         let mut base = None;
+        let mut metadata = None;
         for change in &commit.updates {
             match change.proposal_type {
                 MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE => {
@@ -1012,6 +1034,20 @@ impl Provider {
                     base = Some(decode_base_room_policy(&change.payload).map_err(|_| {
                         UpdateRefusal::Invalid("the base room policy is malformed")
                     })?);
+                }
+                mimi_core::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE => {
+                    // Display data (protocol-07 §10): read with bounds, kept as sent, and enforced on nothing. It names
+                    // its own room, so a value naming another room is refused.
+                    let read = mimi_core::room_metadata::decode_room_metadata(&change.payload)
+                        .map_err(|_| UpdateRefusal::Invalid("the room metadata is malformed"))?;
+                    if mimi_core::uri::canonical(&read.room_uri)
+                        != mimi_core::uri::canonical(room_uri)
+                    {
+                        return Err(UpdateRefusal::Invalid(
+                            "the room metadata names another room",
+                        ));
+                    }
+                    metadata = Some(change.payload.clone());
                 }
                 _ => {
                     return Err(UpdateRefusal::Invalid(
@@ -1039,7 +1075,7 @@ impl Provider {
                 (Some(roles), _) => roles,
                 (None, Some(stored)) => stored.roles.clone(),
                 (None, None) => {
-                    return Err(UpdateRefusal::Invalid(
+                    return Err(UpdateRefusal::Policy(
                         "the room has no roles yet; send the role list first",
                     ))
                 }
@@ -1050,18 +1086,74 @@ impl Provider {
             let policy = RoomPolicy { base, roles };
             policy
                 .validate()
-                .map_err(|_| UpdateRefusal::Invalid("the room policy is not valid"))?;
+                .map_err(|_| UpdateRefusal::Policy("the room policy is not valid"))?;
             Some(policy)
         } else {
             None
         };
         if let Some(update) = &participants {
+            self.check_roles_held(room_uri, policy.as_ref(), update)?;
             self.apply_participant_list_update(room_uri, update, now_unix)?;
         }
-        match policy {
-            Some(policy) => self.store_room_policy(room_uri, policy, now_unix),
+        if let Some(policy) = policy {
+            self.store_room_policy(room_uri, policy, now_unix)?;
+        }
+        match metadata {
+            Some(metadata) => self
+                .store
+                .set_room_metadata(room_uri, &metadata, now_unix)
+                .map_err(|e| store_refusal(&e)),
             None => Ok(()),
         }
+    }
+
+    /// Every role a participant-list change puts a user in is one the room's policy defines (or 0, out of the room):
+    /// the policy this Commit ends with when it carries one, else the stored one. A ban into role 1 is therefore refused
+    /// while the list does not define role 1 (room-policy PR #51). A room with no policy has no roles to check against
+    /// and is not checked. Who made the change is not checked here: the Commit's sender is a leaf index, and this hub
+    /// keeps no ratchet tree to map it to a member (DIVERGENCES, DIV-15).
+    fn check_roles_held(
+        &self,
+        room_uri: &str,
+        ending_policy: Option<&RoomPolicy>,
+        update: &ParticipantListUpdate,
+    ) -> Result<(), UpdateRefusal> {
+        let stored;
+        let policy = match ending_policy {
+            Some(policy) => policy,
+            None => {
+                stored = self
+                    .room_policy(room_uri)
+                    .map_err(|_| UpdateRefusal::Store)?;
+                match &stored {
+                    Some(policy) => policy,
+                    None => return Ok(()),
+                }
+            }
+        };
+        let roles = update
+            .added_participants
+            .iter()
+            .map(|added| added.role_index)
+            .chain(
+                update
+                    .changed_role_participants
+                    .iter()
+                    .map(|changed| changed.role_index),
+            );
+        for role in roles {
+            if !policy.role_can_be_held(role) {
+                return Err(UpdateRefusal::Policy(
+                    "a participant is given a role the room's policy does not define",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The room's metadata as its last accepted update sent it (protocol-07 §10), if it has any.
+    pub fn room_metadata(&self, room_uri: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        self.store.room_metadata(room_uri)
     }
 
     /// What a Commit's `Add` and `Remove` proposals must say beside its change (when it has any), checked against the list the room holds now
@@ -1127,7 +1219,7 @@ impl Provider {
     ) -> Result<(), UpdateRefusal> {
         policy
             .validate()
-            .map_err(|_| UpdateRefusal::Invalid("the room policy is not valid"))?;
+            .map_err(|_| UpdateRefusal::Policy("the room policy is not valid"))?;
         self.set_room_policy(room_uri, &policy, now_unix)
             .map_err(|e| store_refusal(&e))
     }

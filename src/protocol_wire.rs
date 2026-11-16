@@ -2242,6 +2242,24 @@ impl IdentifierRequest {
         }
         String::from_utf8(element.search_value.clone()).ok()
     }
+
+    /// The one query element's type and value, when the request carries exactly one element of type `Handle` or `Nick`
+    /// with a UTF-8 value; `None` otherwise. §5.8: a `handle` search matches the entire handle URI, a `nick` search the
+    /// nickname or handle user part. The same single-element rule as [`Self::primary_search_value`] applies.
+    pub fn primary_search(&self) -> Option<(SearchIdentifierType, String)> {
+        let [element] = self.query_elements.as_slice() else {
+            return None;
+        };
+        if !matches!(
+            element.search_type,
+            SearchIdentifierType::Handle | SearchIdentifierType::Nick
+        ) {
+            return None;
+        }
+        String::from_utf8(element.search_value.clone())
+            .ok()
+            .map(|value| (element.search_type, value))
+    }
 }
 
 /// §5.8 `IdentifierQueryCode` (0-4).

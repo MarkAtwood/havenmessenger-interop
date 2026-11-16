@@ -63,8 +63,13 @@ pub fn build_mtls_server_config(
     for ca in certs_from_pem(client_ca_pem)? {
         roots.add(ca)?;
     }
+    // A client certificate is optional: a peer may instead sign each request with a DNS-published key, and the
+    // provider-auth gate admits a request only with one proof or the other. A certificate that is sent must still
+    // chain to the configured CA.
     let client_verifier =
-        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone()).build()?;
+        WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+            .allow_unauthenticated()
+            .build()?;
 
     let server_certs = certs_from_pem(server_cert_pem)?;
     let server_key = key_from_pem(server_key_pem)?;
@@ -256,7 +261,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn mtls_handshake_requires_client_cert() {
+    async fn a_client_cert_is_optional_but_must_chain_and_the_gate_still_holds() {
         use crate::{http::build_router, Provider};
 
         // CA + server cert (SAN localhost) + a valid client cert, all from the same CA.
@@ -277,7 +282,10 @@ pub(crate) mod tests {
         let provider = Arc::new(Mutex::new(
             Provider::in_memory("havenmessenger.com").unwrap(),
         ));
-        let router = build_router(provider);
+        let router = crate::provider_auth::with_provider_auth(
+            build_router(provider),
+            Arc::new(crate::signature::PeerKeys::from_file(None)),
+        );
         let tls = axum_server::tls_rustls::RustlsConfig::from_config(server_cfg);
         tokio::spawn(async move {
             let _ = axum_server::from_tcp_rustls(listener, tls)
@@ -318,18 +326,48 @@ pub(crate) mod tests {
             );
         }
 
-        // (2) WITHOUT a client cert → server REQUIRES one → handshake/exchange fails.
-        {
+        // (2) WITHOUT a client cert the handshake completes (a peer may sign its requests instead), the directory is
+        // served, and any other route without a valid signature is refused by the provider-auth gate.
+        for (request, want) in [
+            (
+                "GET /.well-known/mimi-protocol-directory HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                "200 OK",
+            ),
+            (
+                "POST /mimi/pl/identifierQuery HTTP/1.1\r\nHost: localhost\r\nFrom: mimi@a.example\r\nContent-Length: 4\r\nConnection: close\r\n\r\n\x01\x00\x00\x00",
+                "403 Forbidden",
+            ),
+        ] {
             let connector =
                 tokio_rustls::TlsConnector::from(Arc::new(client_config(&ca_pem, None)));
             let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
                 .await
                 .unwrap();
-            let result = connector.connect(server_name, tcp).await;
-            let rejected = match result {
-                Err(_) => true, // handshake refused
+            let mut tls_stream = connector
+                .connect(server_name.clone(), tcp)
+                .await
+                .expect("a handshake without a client cert completes");
+            tls_stream.write_all(request.as_bytes()).await.unwrap();
+            let mut resp = Vec::new();
+            tls_stream.read_to_end(&mut resp).await.unwrap();
+            let text = String::from_utf8_lossy(&resp);
+            assert!(text.contains(want), "expected {want}, got:\n{text}");
+        }
+
+        // (3) A client cert from a CA this hub does not trust is still refused at the handshake.
+        {
+            let (other_ca, _other_ca_pem) = make_ca();
+            let (stranger_cert, stranger_key) = issue(&other_ca, vec![], "stranger");
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(client_config(
+                &ca_pem,
+                Some((&stranger_cert, &stranger_key)),
+            )));
+            let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            let rejected = match connector.connect(server_name, tcp).await {
+                Err(_) => true,
                 Ok(mut s) => {
-                    // Some stacks complete connect() then fail on first I/O; treat no-response as rejected.
                     let _ = s
                         .write_all(b"GET /.well-known/mimi-protocol-directory HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
                         .await;
@@ -339,7 +377,7 @@ pub(crate) mod tests {
             };
             assert!(
                 rejected,
-                "a client WITHOUT a cert must be rejected (mTLS enforced)"
+                "a client cert from an untrusted CA must be refused"
             );
         }
     }

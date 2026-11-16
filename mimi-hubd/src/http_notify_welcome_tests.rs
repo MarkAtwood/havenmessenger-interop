@@ -40,7 +40,7 @@ impl Signer for MemorySigner {
 }
 
 /// The Welcome another provider's member makes when adding the holder of `key_package` to its group.
-fn welcome_adding(key_package: &[u8]) -> Vec<u8> {
+pub(super) fn welcome_adding(key_package: &[u8]) -> Vec<u8> {
     let provider = OpenMlsRustCrypto::default();
     let (private, public) = provider
         .crypto()

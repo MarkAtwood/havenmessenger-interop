@@ -16,6 +16,17 @@ use super::tests::{app, real_mls_envelope_bytes};
 const REQUESTER: &str = "mimi://mimi-b.havenmessenger.com/u/bob";
 const TARGET: &str = "mimi://havenmessenger.com/u/alice";
 
+/// The code an identifierQuery answer carries in its body: found and not found are both HTTP 200 (§5.8), so the code
+/// is what tells them apart.
+async fn identifier_code(response: Response) -> mimi_core::protocol_wire::IdentifierQueryCode {
+    use http_body_util::BodyExt;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    mimi_core::protocol_wire::IdentifierResponse::decode(&body)
+        .unwrap()
+        .response_code
+}
+
 async fn post(router: Router, uri: &str, body: Vec<u8>) -> Response {
     router
         .oneshot(
@@ -201,7 +212,8 @@ async fn identifier_query_answers_on_the_domain_path_and_on_the_older_one() {
     let query = |value: &str| {
         IdentifierRequest {
             query_elements: vec![QueryElement {
-                search_type: SearchIdentifierType::Handle,
+                // A bare name is a nick search (§5.8); a handle search takes the whole handle URI.
+                search_type: SearchIdentifierType::Nick,
                 qualifier: Vec::new(),
                 search_value: value.as_bytes().to_vec(),
             }],
@@ -215,16 +227,155 @@ async fn identifier_query_answers_on_the_domain_path_and_on_the_older_one() {
     ] {
         let (router, p) = app();
         p.lock().unwrap().enroll("alice").unwrap();
-        // An enrolled handle is found (200) and anything else is the bare 404: a missing route would be 404 for both.
+        // An enrolled name is success and anything else notFound, both answered on this path: a missing route would
+        // answer neither.
         assert_eq!(
-            post(router.clone(), uri, query("alice")).await.status(),
-            StatusCode::OK,
+            identifier_code(post(router.clone(), uri, query("alice")).await).await,
+            mimi_core::protocol_wire::IdentifierQueryCode::Success,
             "{uri}"
         );
         assert_eq!(
-            post(router, uri, query("nobody")).await.status(),
-            StatusCode::NOT_FOUND,
+            identifier_code(post(router, uri, query("nobody")).await).await,
+            mimi_core::protocol_wire::IdentifierQueryCode::NotFound,
             "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_handle_search_takes_the_whole_handle_uri() {
+    use mimi_core::protocol_wire::{IdentifierRequest, QueryElement, SearchIdentifierType};
+    let query = |search_type: SearchIdentifierType, value: &str| {
+        IdentifierRequest {
+            query_elements: vec![QueryElement {
+                search_type,
+                qualifier: Vec::new(),
+                search_value: value.as_bytes().to_vec(),
+            }],
+        }
+        .encode()
+        .unwrap()
+    };
+    let (router, p) = app();
+    p.lock().unwrap().enroll("alice").unwrap();
+    let uri = "/mimi/pl/identifierQuery";
+    // The im: form names this hub's domain after an @; built here so no address sits in the source as text.
+    let im_handle = ["im:alice", "havenmessenger.com"].join("@");
+    for handle in [
+        "mimi://havenmessenger.com/u/alice",
+        "MIMI://HavenMessenger.com/u/%61lice",
+        im_handle.as_str(),
+    ] {
+        assert_eq!(
+            post(
+                router.clone(),
+                uri,
+                query(SearchIdentifierType::Handle, handle)
+            )
+            .await
+            .status(),
+            StatusCode::OK,
+            "{handle}"
+        );
+    }
+    for not_ours in [
+        "alice",
+        "mimi://other.example/u/alice",
+        "im:alice@other.example",
+        "mimi://havenmessenger.com/r/alice",
+    ] {
+        assert_eq!(
+            identifier_code(
+                post(
+                    router.clone(),
+                    uri,
+                    query(SearchIdentifierType::Handle, not_ours)
+                )
+                .await
+            )
+            .await,
+            mimi_core::protocol_wire::IdentifierQueryCode::NotFound,
+            "{not_ours}"
+        );
+    }
+    assert_eq!(
+        post(router, uri, query(SearchIdentifierType::Nick, "alice"))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_name_outside_ascii_is_found_both_ways_and_answered_as_a_uri() {
+    use http_body_util::BodyExt;
+    use mimi_core::protocol_wire::{
+        IdentifierQueryCode, IdentifierRequest, IdentifierResponse, QueryElement,
+        SearchIdentifierType,
+    };
+    let query = |value: &str| {
+        IdentifierRequest {
+            query_elements: vec![QueryElement {
+                search_type: SearchIdentifierType::Handle,
+                qualifier: Vec::new(),
+                search_value: value.as_bytes().to_vec(),
+            }],
+        }
+        .encode()
+        .unwrap()
+    };
+    let (router, p) = app();
+    p.lock().unwrap().enroll("café").unwrap();
+    for handle in [
+        "mimi://havenmessenger.com/u/café",
+        "mimi://havenmessenger.com/u/caf%C3%A9",
+    ] {
+        let response = post(router.clone(), "/mimi/pl/identifierQuery", query(handle)).await;
+        assert_eq!(response.status(), StatusCode::OK, "{handle}");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let answer = IdentifierResponse::decode(&body).unwrap();
+        assert_eq!(
+            answer.response_code,
+            IdentifierQueryCode::Success,
+            "{handle}"
+        );
+        // The answer is a URI (RFC 3986), the name percent-encoded from its UTF-8, never raw UTF-8.
+        assert_eq!(
+            answer.uris,
+            vec![mimi_core::protocol_wire::IdentifierUri(
+                "mimi://havenmessenger.com/u/caf%C3%A9".into()
+            )],
+            "{handle}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_answer_names_the_server_and_its_version() {
+    let (router, _p) = app();
+    let directory = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/.well-known/mimi-protocol-directory")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let missing = router
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/no/such/route")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    for response in [directory, missing] {
+        assert_eq!(
+            response.headers().get(axum::http::header::SERVER).unwrap(),
+            concat!("mimi-hubd/", env!("CARGO_PKG_VERSION"))
         );
     }
 }

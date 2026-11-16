@@ -27,18 +27,35 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::server::TlsStream;
 use tower::Layer;
 
-/// The end-entity certificate a peer presented in the TLS handshake.
+/// Who a peer proved itself to be: the end-entity certificate it presented in the TLS handshake, or the provider domain
+/// whose DNS-published key signed its request (draft-atwood-mimi-provider-auth §5.3, checked by `provider_auth`).
 #[derive(Clone, Debug)]
 pub struct PeerIdentity {
-    end_entity: CertificateDer<'static>,
+    proof: Proof,
+}
+
+#[derive(Clone, Debug)]
+enum Proof {
+    Certificate(CertificateDer<'static>),
+    Signed(String),
 }
 
 impl PeerIdentity {
     pub fn new(end_entity: CertificateDer<'static>) -> Self {
-        Self { end_entity }
+        Self {
+            proof: Proof::Certificate(end_entity),
+        }
     }
 
-    /// True when the certificate is valid for `domain` as a DNS name. An IP address is never a provider domain.
+    /// A peer whose request a key published for `domain` signed. Only the provider-auth gate makes one.
+    pub fn signed(domain: &str) -> Self {
+        Self {
+            proof: Proof::Signed(domain.to_ascii_lowercase()),
+        }
+    }
+
+    /// True when the peer is proven to speak for `domain`: a certificate valid for it as a DNS name, or a signature by
+    /// a key published for it. An IP address is never a provider domain.
     pub fn authenticates(&self, domain: &str) -> bool {
         let Ok(name) = ServerName::try_from(domain.to_owned()) else {
             return false;
@@ -46,16 +63,22 @@ impl PeerIdentity {
         if !matches!(name, ServerName::DnsName(_)) {
             return false;
         }
-        let Ok(parsed) = ParsedCertificate::try_from(&self.end_entity) else {
-            return false;
-        };
-        rustls::client::verify_server_name(&parsed, &name).is_ok()
+        match &self.proof {
+            Proof::Signed(signed) => signed.eq_ignore_ascii_case(domain),
+            Proof::Certificate(end_entity) => {
+                let Ok(parsed) = ParsedCertificate::try_from(end_entity) else {
+                    return false;
+                };
+                rustls::client::verify_server_name(&parsed, &name).is_ok()
+            }
+        }
     }
 }
 
 /// What the acceptor puts on every request of a connection: the peer's certificate, or `None` where the connection
-/// presented none (the server configuration requires one, so a served connection always has it). A router that is
-/// not behind this acceptor has no `PeerCert` at all, and its handlers treat that as an unauthenticated peer.
+/// presented none. A connection may present none; the provider-auth gate then admits a request only with a valid
+/// signature, and replaces this with the signed domain. A router that is not behind this acceptor has no `PeerCert` at
+/// all, and its handlers treat that as an unauthenticated peer.
 #[derive(Clone, Debug)]
 pub struct PeerCert(pub Option<PeerIdentity>);
 

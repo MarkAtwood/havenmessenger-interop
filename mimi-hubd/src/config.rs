@@ -23,6 +23,7 @@ const KNOWN_KEYS: &[&str] = &[
     "directory_bind_addr",
     "public_base_url",
     "activity_log",
+    "peer_keys",
 ];
 
 /// The settings this daemon takes from env vars, also loadable from a TOML file. Field names match the env var suffix in lowercase (`MIMI_PROVIDER_DOMAIN` ->
@@ -40,6 +41,7 @@ pub struct ConfigFile {
     pub public_base_url: Option<String>,
     /// `1` turns on the activity line (see `activity.rs`). Anything else, or no value, leaves it off.
     pub activity_log: Option<String>,
+    pub peer_keys: Option<String>,
 }
 
 impl ConfigFile {
@@ -78,6 +80,7 @@ impl ConfigFile {
             "directory_bind_addr" => self.directory_bind_addr.as_ref(),
             "public_base_url" => self.public_base_url.as_ref(),
             "activity_log" => self.activity_log.as_ref(),
+            "peer_keys" => self.peer_keys.as_ref(),
             _ => None,
         }
     }
@@ -223,6 +226,11 @@ pub fn resolve_all(file: Option<&ConfigFile>) -> Resolved {
     m.insert(
         "MIMI_ACTIVITY_LOG",
         resolve("MIMI_ACTIVITY_LOG", "activity_log", file, None),
+    );
+    // No default: without a key file no signature verifies, and only a client certificate admits a peer.
+    m.insert(
+        "MIMI_PEER_KEYS",
+        resolve("MIMI_PEER_KEYS", "peer_keys", file, None),
     );
     m
 }

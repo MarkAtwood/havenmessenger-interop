@@ -481,3 +481,57 @@ async fn every_joint_update_request_vector_gets_havens_recorded_answer() {
     }
     assert_eq!(checked, 3);
 }
+
+fn room_metadata_for(room: &str) -> Vec<u8> {
+    mimi_core::room_metadata::encode_room_metadata(&mimi_core::room_metadata::RoomMetadata {
+        room_uri: room.into(),
+        room_name: "Planning".into(),
+        descriptions: Vec::new(),
+        avatar: "https://havenmessenger.com/avatar.png".into(),
+        subject: "IETF 127".into(),
+        mood: String::new(),
+    })
+}
+
+#[tokio::test]
+async fn a_room_metadata_update_is_kept_as_sent() {
+    let (router, p) = app();
+    hosted_room_with_alice_and_bob(&p);
+    let before = participants(&p);
+    let payload = room_metadata_for(ROOM);
+    let commit =
+        real_single_custom_proposal_commit(MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE, payload.clone());
+    let sent = as_app_data_update(&commit, &payload, 0x0023);
+    let answer = update_answer(post(router, ROOM, bundle_of(sent)).await).await;
+    assert!(
+        matches!(answer, UpdateRoomResponse::Success { .. }),
+        "{answer:?}"
+    );
+    assert_eq!(
+        p.lock().unwrap().room_metadata(ROOM).unwrap(),
+        Some(payload)
+    );
+    assert_eq!(participants(&p), before);
+}
+
+#[tokio::test]
+async fn a_room_metadata_update_for_another_room_or_malformed_is_refused_and_keeps_nothing() {
+    for payload in [
+        room_metadata_for("mimi://havenmessenger.com/r/elsewhere"),
+        vec![0x05, b'n', b'o', b'p', b'e'],
+    ] {
+        let (router, p) = app();
+        hosted_room_with_alice_and_bob(&p);
+        let commit = real_single_custom_proposal_commit(
+            MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE,
+            payload.clone(),
+        );
+        let sent = as_app_data_update(&commit, &payload, 0x0023);
+        let answer = update_answer(post(router, ROOM, bundle_of(sent)).await).await;
+        assert!(
+            matches!(answer, UpdateRoomResponse::InvalidProposal { .. }),
+            "{answer:?}"
+        );
+        assert_eq!(p.lock().unwrap().room_metadata(ROOM).unwrap(), None);
+    }
+}

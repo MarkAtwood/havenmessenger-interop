@@ -179,7 +179,7 @@ fn a_message_with_no_app_data_update_is_not_rewritten() {
 
 #[test]
 fn another_component_is_refused() {
-    for component in [0x0020u16, 0x0021, 0x0023, 0x0000, 0xFFFF] {
+    for component in [0x0020u16, 0x0021, 0x0000, 0xFFFF] {
         let sent = commit_with(&[app_data_update(
             component,
             APP_DATA_UPDATE_OP_UPDATE,
@@ -190,6 +190,20 @@ fn another_component_is_refused() {
             "component {component:#06x}"
         );
     }
+}
+
+#[test]
+fn room_metadata_is_read_as_its_own_change() {
+    let sent = commit_with(&[app_data_update(
+        crate::room_metadata::ROOM_METADATA_COMPONENT_ID,
+        APP_DATA_UPDATE_OP_UPDATE,
+        Some(&update_of(8)),
+    )]);
+    let read = decode_single_custom_proposal_commit(&sent).unwrap();
+    assert_eq!(
+        read.proposal_type,
+        crate::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE
+    );
 }
 
 #[test]
@@ -372,12 +386,16 @@ fn which_changes_one_commit_may_carry_together() {
     let list = MIMI_PARTICIPANT_LIST_PROPOSAL_TYPE;
     let roles = MIMI_ROLES_LIST_PROPOSAL_TYPE;
     let base = MIMI_BASE_ROOM_POLICY_PROPOSAL_TYPE;
+    let meta = crate::room_metadata::MIMI_ROOM_METADATA_PROPOSAL_TYPE;
     for allowed in [
         vec![],
         vec![of(list)],
         vec![of(list), of(base)],
         vec![of(base), of(list)],
         vec![of(roles), of(base)],
+        vec![of(meta)],
+        vec![of(list), of(meta)],
+        vec![of(roles), of(base), of(meta)],
     ] {
         assert!(check_changes(&allowed).is_ok(), "{allowed:?}");
     }
@@ -387,6 +405,7 @@ fn which_changes_one_commit_may_carry_together() {
         vec![of(roles), of(list), of(base)],
         vec![of(base), of(base)],
         vec![of(roles), of(roles)],
+        vec![of(meta), of(meta)],
     ] {
         assert!(check_changes(&refused).is_err(), "{refused:?}");
     }

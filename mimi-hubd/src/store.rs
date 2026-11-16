@@ -78,6 +78,13 @@ CREATE INDEX IF NOT EXISTS idx_consent_pair ON consent(requester, target);
 -- blob keyed by the room URI, plus each member's assigned role_index. Absent policy = default-permissive
 -- (backward-compatible: rooms without a policy enforce only active-participant, as before). The hub
 -- enforces ONLY canSendMessage (P5); the role assignment is the per-member role for that check.
+-- A room's metadata (protocol-07 §10, room_metadata 0x0023), as the last accepted update sent it. Display data:
+-- kept for the room, enforced on nothing.
+CREATE TABLE IF NOT EXISTS room_metadata (
+    room_uri TEXT PRIMARY KEY,
+    metadata BLOB NOT NULL,
+    ts       INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS room_policy (
     room_uri    TEXT PRIMARY KEY,
     policy_json TEXT NOT NULL,
@@ -615,6 +622,37 @@ impl SqliteStore {
             params![room_uri],
             |r| r.get(0),
         )?)
+    }
+
+    // ---- room metadata (protocol-07 §10) ----
+
+    /// Keep a room's metadata, replacing what it had.
+    pub fn set_room_metadata(
+        &self,
+        room_uri: &str,
+        metadata: &[u8],
+        now_unix: u64,
+    ) -> anyhow::Result<()> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        self.conn.execute(
+            "INSERT INTO room_metadata (room_uri, metadata, ts) VALUES (?1,?2,?3) \
+             ON CONFLICT(room_uri) DO UPDATE SET metadata=excluded.metadata, ts=excluded.ts",
+            params![room_uri, metadata, now_unix as i64],
+        )?;
+        Ok(())
+    }
+
+    /// A room's metadata, or None when it has none.
+    pub fn room_metadata(&self, room_uri: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let room_uri = mimi_core::uri::canonical(room_uri);
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT metadata FROM room_metadata WHERE room_uri = ?1",
+                params![room_uri],
+                |r| r.get::<_, Vec<u8>>(0),
+            )
+            .optional()?)
     }
 
     // ---- room policy + member roles (P1-P6; room-policy-04) ----

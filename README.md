@@ -89,6 +89,19 @@ cargo run --example virtual_clients_demo  # a narrated walkthrough: two devices 
                                            # removed and the epoch advances
 ```
 
+## Verifying a release
+
+Each release from v0.0.2 on carries `SHA256SUMS` and `SHA256SUMS.asc`, a detached signature by the Haven Releases key
+(ed25519, fingerprint `C9DEC6490FCD17B888F927AA02BFC559CF4CF781`), and tags after v0.0.2 are signed by the same
+key. The public key is [`RELEASE-KEY.asc`](RELEASE-KEY.asc) in this repository.
+
+```bash
+gpg --import RELEASE-KEY.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+git tag -v <tag>
+```
+
 ## License
 [Apache-2.0](LICENSE). Haven's product code (client, crypto core) is AGPL-3.0; only this
 interop layer is permissive.

@@ -36,21 +36,31 @@ the gate rather than passed through.
 Not supported. v1 is messaging-only: text content over the wire and JSON lanes, no binary
 asset transfer, no OHTTP relay path (`§5.10`).
 
-## DIV-4 - `identifierQuery` has no existence oracle, and only ever answers a single Handle query
+## DIV-4 - `identifierQuery` has no existence oracle, and only ever answers a single Handle or Nick query
 
 Only users who opted in (enrolled) can be found. On the TLS-PL wire lane the answer is an `IdentifierResponse`, as
-§5.8 has it: an enrollee is HTTP 200 with `success` and the user's URI on this provider; every other answer is HTTP 404
-with the same `notFound` body, byte for byte, whether the user is not enrolled, does not exist, or the request could not
-be decoded or evaluated. So an answer says found or not found and nothing else, and repeated queries cannot tell a real
+§5.8 has it, always HTTP 200 (notFound means the request was acceptable and nothing matched, so the code in the body
+says the outcome): an enrollee is `success` with the user's URI on this provider; every other answer is the same
+`notFound` body, byte for byte, whether the user is not enrolled, does not exist, or the request could not be decoded or
+evaluated. So an answer says found or not found and nothing else, and repeated queries cannot tell a real
 but private account from a name nobody has. The JSON lane answers with the bare status (200 or 404, no body).
 
 This also means the hub cannot honor the draft's implied AND-across-elements semantics for a
 multi-element `IdentifierRequest`: v1 has no data model for `email`/`phone`/`oidcStdClaim`/
-`vcardField`/etc. lookups, only usernames (wire type `Handle`). A request is answered only when
-it carries exactly one query element of type `Handle`; a request with zero elements, more than
-one element, or any non-`Handle` element is treated as unanswerable and always returns
-not-found, rather than silently evaluating just the first element regardless of its type or
-what else was asked.
+`vcardField`/etc. lookups, only usernames. A request is answered only when it carries exactly
+one query element of type `Handle` or `Nick`; a request with zero elements, more than one
+element, or any other element type is treated as unanswerable and always returns not-found,
+rather than silently evaluating just the first element regardless of its type or what else was
+asked.
+
+As §5.8 has it, a `Nick` search is the bare user name (`alice`), and a `Handle` search is the
+entire handle URI. The handle URI forms this hub takes for one of its users are
+`mimi://<this hub's domain>/u/<name>`, compared in canonical form (RFC 3986 §6.2.2: case in the
+scheme and host, percent-encoded unreserved characters; a name written as an IRI is mapped to its
+URI, RFC 3987 §3.1, so `zoë` and `zo%C3%AB` are one name), and `im:<name>@<this hub's domain>`,
+the form of the draft's own example. A found user is answered as a URI, the name percent-encoded
+from its UTF-8. A handle on another provider, a room or device URI, a bare name searched as a
+handle, or a name that does not decode to UTF-8 is not-found.
 
 ## DIV-5 - `submitMessage`'s sender authorization and fan-out - MOSTLY CLOSED
 
@@ -234,10 +244,15 @@ without needing that machinery in the first place.
   is an `UpdateRoomResponse` in a 200: `success` with the hub's acceptance time in milliseconds;
   `notAllowed` for a room this hub does not host, a bundle whose Welcome or GroupInfo is under
   another ciphersuite, or a store limit (the participant cap), with the same bytes for each, so a
-  refusal does not say which of them applied; `invalidProposal` for a body that is not an
-  `UpdateRequest`, a bundle of proposals that is not a leave, an unrecognized proposal type, or
-  an update that does not fit the room, with an empty `invalidProposals` list except where a
-  Commit's references are at fault (above), which it names. `success` for a bundle of proposals
+  refusal does not say which of them applied; `notAllowed` with the reason in its description when
+  the room's policy refuses the change (protocol-07 §5.3: "some type of policy or authorization prevented" it): a
+  role the policy does not define, a role list or base policy that does not validate, a base policy before any roles,
+  or a role list beside a participant-list change (room-policy-04 §3); `invalidProposal` for a body that is not an
+  `UpdateRequest`, a bundle of proposals that is not a leave, an unrecognized proposal type, a proposal that does not
+  decode, or an update that does not fit the room, with an empty `invalidProposals` list except where a
+  Commit's references are at fault (above), which it names. The list stays empty for a proposal the Commit carries by
+  value: `invalidProposals` lists `ProposalRef`s, and RFC 9420 §5.2 computes a `ProposalRef` only for a proposal sent
+  as its own message, so an inline proposal has none to name. Protocol-07 §5.3 does not say what to answer then. `success` for a bundle of proposals
   means they are held for the next Commit. The hub checks that the room URI is under its own
   domain, not that the room exists, and answers `invalidProposal` or `success` for a room it
   hosts, so a peer on the allowlist can learn a room's participant count from those answers.
@@ -325,7 +340,8 @@ private type `0xF7A0` (`mimiParticipantList`). Both carry the draft's `Participa
 encoding and are applied the same way. The openmls release this crate pins (0.9.2) is built
 without its `extensions-draft` feature and cannot read an AppDataUpdate, so `commit_wire` reads
 the proposals window itself and rewrites an AppDataUpdate to the `0xF7A0` form for reading only; the
-bytes of the Commit are never changed. `/notify` checks a fanned-out Commit or proposal the same way.
+bytes of the Commit are never changed. A fanned-out Commit or proposal reaching `/notify` is refused before it is read
+(see below).
 
 Protocol-07 §5.3 sends a room-policy change as an AppDataUpdate for the room policy components of
 room-policy-04, with values `0x0024` to `0x0030` suggested and not yet registered. This hub reads two:
@@ -342,22 +358,34 @@ list sent first sets the roles and leaves the base policy at the draft's default
 named `banned` is refused: room-policy-04 says the banned role "always has role_index = 1 and role_name = banned" and
 that it "does not have to exist", and this hub reads that as fixing the name of whatever role holds index 1.
 
-What the hub keeps of them is what it enforces. Of a role: its index, its name, its
-`authorized_role_changes`, and the capabilities `canAddParticipant` (`0x0000`),
-`canRemoveParticipant` (`0x0001`), `canBan` (`0x000a`), `canKick` (`0x000c`), `canChangeUserRole`
-(`0x000f`) and `canSendMessage` (`0x0100`). The other capability values (uploads, calls, room attributes
+What the hub keeps of them: of a role, its index, its name, its `authorized_role_changes`, and the capabilities
+`canAddParticipant` (`0x0000`), `canRemoveParticipant` (`0x0001`), `canBan` (`0x000a`), `canKick` (`0x000c`),
+`canChangeUserRole` (`0x000f`) and `canSendMessage` (`0x0100`). What it enforces of them on a Commit is narrower:
+every role a participant-list change puts a user in must be one the room's policy defines (or 0, out of the room), so a
+ban into role 1 is refused while the list does not define role 1. **Who made a role change is not checked:** `canBan`,
+`canKick`, `canChangeUserRole`, `canAddParticipant`, `canRemoveParticipant` and the committer's
+`authorized_role_changes` are not enforced on a Commit, because the Commit's sender is a leaf index and this hub keeps
+no ratchet tree to map it to a member. They will be once it keeps one. A room with no policy is not checked at all.
+`canSendMessage` is enforced where the hub sees the sender, on `submitMessage`, by the sender's role (§8.3). The other capability values (uploads, calls, room attributes
 and the rest of the registry, which is open to additions) are read for their shape and not carried, so a
 role that lists them is accepted. The description and the four participant-count constraints are
 read and not kept. Of a base policy: `fixed_membership`, `parent_dependant`, `max_clients`,
-`max_users` and `discoverable`; the rest is read and not kept. A value is refused when it does not end
+`max_users` and `discoverable`; the rest is read and not kept. **Kept is not enforced for the membership limits:** a
+Commit that grows a `fixed_membership` room, or takes a room past `max_clients` or `max_users`, is not refused; the
+hub checks only that a fixed-membership room's roles hold no `canAddParticipant` (room-policy-04 §5). A value is refused when it does not end
 where its length says, when a length or a count passes a bound (256 roles, 512 capabilities, 1 KiB of
 text), when a flag is neither 0 nor 1, when a role index repeats, when a minimum participant count is
 above its maximum, when a parent-dependent room names no parent or any other names one, or when the
 resulting policy does not validate (the reserved roles 0 and 1, a transition that names an undefined
 role, a fixed-membership room whose role may add participants).
 
-The other eleven components are refused as an unrecognized proposal type, as are `room_metadata`
-(`0x0023`, protocol-07 §10.4), a removal of any component, and an AppSync proposal, so a sender is told
+`room_metadata` (`0x0023`, protocol-07 §10.4) is read and kept: a `RoomMetaData` that decodes within bounds (16 KiB
+in all, 1 KiB a text, 4 KiB a description, 16 descriptions, UTF-8 without NUL, an `https` avatar or none) and names
+this room is stored as sent, replacing the last one, alone or beside the changes above. It is display data and the hub
+enforces nothing from it; who may change it is not checked, since no capability for it is kept.
+
+The other eleven components are refused as an unrecognized proposal type, as are a removal of any component and an
+AppSync proposal, so a sender is told
 the change was not applied and never that it was: `mls_operational_policy` (`0x0024`), `preauth_list`
 (`0x0026`), `status_notification_policy` (`0x0028`), `join_link_policy` (`0x0029`), `join_links`
 (`0x002a`), `link_preview_policy` (`0x002b`), `asset_policy` (`0x002c`), `logging_policy` (`0x002d`),
@@ -368,8 +396,11 @@ Where room-policy-04 leaves a rule open, this is what the hub does. The issues a
 `ietf-wg-mimi/mimi-room-policy`.
 
 - [#33](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/33), rules for a valid role list: a repeated
-  `role_index`, a transition that names a role outside the list (0 and 1 are always defined), and a minimum
-  above its maximum are refused. A capability listed twice counts once. Two `authorized_role_changes`
+  `role_index`, a transition that names a role outside the list, and a minimum above its maximum are refused.
+  A list may name role 1, the banned role, without defining it: it "does not have to exist"
+  ([#51](https://github.com/ietf-wg-mimi/mimi-room-policy/pull/51)). Banning into it needs it defined ("to use the
+  canBan and canUnban capabilities, a role with role_index = 1 needs to exist"), so a ban into an undefined role 1,
+  or any change into a role the list does not define, is refused while the list itself is accepted. A capability listed twice counts once. Two `authorized_role_changes`
   entries with the same `from_role_index` are both honoured: a change is authorized when any entry permits it.
 - [#31](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/31), when role constraints are checked: the four
   participant-count constraints are read and not kept, so the hub enforces them at no point in a commit.
@@ -408,8 +439,14 @@ read. The same question gates the JSON-lane `/mimi/v1/notify`, which takes a `ro
 
 What a `/notify` delivers: a Welcome is queued for each local user whose published KeyPackage it names (this provider
 records each KeyPackage's `KeyPackageRef` when it is published, so the recipient comes from its own map and never from
-the peer). An application message or a Commit for a room this provider does not host is accepted (201) and not stored:
-the provider keeps no membership for a room it does not host, so it cannot say which local users the message is for.
+the peer). Anything else (an application message, a Commit, a proposal) is for a room another hub hosts, and this
+provider does not deliver those yet: it keeps no membership for such a room, so it cannot say which local users the
+message is for. It refuses them with 422 and the RFC 9457 problem `remote-room-not-delivered`
+([docs/problems.md](docs/problems.md#remote-room-not-delivered)) rather than answering 201 for a message it would not
+deliver, and the sender should drop the delivery rather than retry it. The refusal is decided before the dedup ledger
+records the body, so a resend of a refused message is refused again; §5.5's "MUST return 201" for a duplicate covers a
+duplicate of what was accepted. The JSON compatibility lane `/mimi/v1/notify` still records any body it is sent and
+answers 201; it delivers nothing.
 
 - **What this does not bind.** The check says which names a certificate carries. It does not say
   which names the CA that signed it may issue. Every CA in the client bundle can issue a certificate

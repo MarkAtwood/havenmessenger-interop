@@ -77,6 +77,18 @@ pub fn build_router(provider: SharedProvider) -> Router {
         .route("/mimi/v1/authorizeSender", post(authorize_sender)) // M2/R3/P5, may this member send?
         .merge(wire_router())
         .with_state(provider)
+        .layer(axum::middleware::map_response(server_header))
+}
+
+/// The `Server` header every answer carries: this implementation and its version.
+pub const SERVER: &str = concat!("mimi-hubd/", env!("CARGO_PKG_VERSION"));
+
+pub(crate) async fn server_header(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::SERVER,
+        axum::http::HeaderValue::from_static(SERVER),
+    );
+    response
 }
 
 /// The directory and nothing else: `GET /.well-known/mimi-protocol-directory`, for a listener that needs no client
@@ -87,6 +99,7 @@ pub fn build_directory_router(provider: SharedProvider) -> Router {
     Router::new()
         .route("/.well-known/mimi-protocol-directory", get(directory))
         .with_state(provider)
+        .layer(axum::middleware::map_response(server_header))
 }
 
 /// The `/mimi/pl/*` routes: the draft's TLS presentation-language wire framing. Every body they answer with is
@@ -519,14 +532,16 @@ fn accept_notify(p: &SharedProvider, source: &VerifiedNotifySource, body: &[u8])
 /// the identical dedup-by-content-hash store call. Rejecting undecodable bodies with 400, rather than treating them as
 /// valid-but-different content the way `submit_notify` treats any other byte string, keeps the wire lane to the
 /// protocol it speaks. A Welcome in the fan-out is queued for each local user whose published KeyPackage it names
-/// (`Provider::deliver_notified_welcome`); application messages and Commits for a room this provider does not host are
-/// accepted and not stored, since it keeps no membership for such a room.
+/// (`Provider::deliver_notified_welcome`). Anything else (an application message, a Commit, a proposal) is for a room
+/// another hub hosts, which this hub does not deliver yet, so it is refused with 422 and the `remote-room-not-delivered`
+/// problem (`docs/problems.md`) rather than accepted and dropped. The refusal comes before the dedup ledger records the
+/// body, so sending it again is refused again: only what was accepted can be a duplicate answered 201.
 async fn notify_wire(
     State(p): State<SharedProvider>,
     Path(room_id): Path<String>,
     peer: Option<Extension<PeerCert>>,
     body: Bytes,
-) -> StatusCode {
+) -> Response {
     let source = match verify_notify_source(&room_id, peer.as_ref()) {
         Ok(source) => source,
         Err(status) => {
@@ -538,7 +553,7 @@ async fn notify_wire(
                     "refused (the path is not a room URI)"
                 }
             );
-            return status;
+            return status.into_response();
         }
     };
     let fanout = match mimi_core::protocol_wire::FanoutMessage::decode(&body) {
@@ -546,9 +561,16 @@ async fn notify_wire(
         Err(error) => {
             // The decoder's own words: a field of the message and a codec value, never a URI or a user.
             eprintln!("[mimi-hubd] notify: refused (not a FanoutMessage: {error})");
-            return StatusCode::BAD_REQUEST;
+            return StatusCode::BAD_REQUEST.into_response();
         }
     };
+    if matches!(
+        mimi_core::gate::welcome_new_members(&fanout.message_and_tail),
+        Err(mimi_core::gate::GateError::NotAWelcome)
+    ) {
+        eprintln!("[mimi-hubd] notify: 422 (not a Welcome; messages for rooms on other hubs are not delivered)");
+        return crate::problem::REMOTE_ROOM_NOT_DELIVERED.response();
+    }
     let g = lock(&p);
     let status = match g.submit_notify(&source, &body, now_unix()) {
         Ok(NotifyOutcome::Process) => {
@@ -558,7 +580,7 @@ async fn notify_wire(
                 Ok(queued) => {
                     eprintln!("[mimi-hubd] notify: Welcome queued for {queued} local user(s)")
                 }
-                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             }
             StatusCode::CREATED
         }
@@ -566,7 +588,7 @@ async fn notify_wire(
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     eprintln!("[mimi-hubd] notify: {status}");
-    status
+    status.into_response()
 }
 
 #[derive(Deserialize)]
@@ -601,12 +623,18 @@ async fn identifier_query(
 async fn identifier_query_wire(State(p): State<SharedProvider>, body: Bytes) -> Response {
     let found = mimi_core::protocol_wire::IdentifierRequest::decode(&body)
         .ok()
-        .and_then(|req| req.primary_search_value())
-        .and_then(|username| {
+        .and_then(|req| req.primary_search())
+        .and_then(|(search_type, value)| {
             let g = lock(&p);
+            let username = crate::identifier_search::enrolled_name(search_type, &value, &g.domain)?;
             match g.identifier_query(&username) {
                 Ok(IdentifierQueryResult::Found) => {
-                    Some(format!("mimi://{}/u/{username}", g.domain))
+                    // The name goes into the URI percent-encoded, so a name in any script is answered as a URI.
+                    Some(format!(
+                        "mimi://{}/u/{}",
+                        g.domain,
+                        mimi_core::uri::encode_path_segment(&username)
+                    ))
                 }
                 Ok(IdentifierQueryResult::NotFound) | Err(_) => None,
             }
@@ -625,8 +653,10 @@ fn identifier_answer(found: Option<String>) -> Response {
                 uris: vec![IdentifierUri(uri)],
             },
         ),
+        // §5.8: notFound means the request was acceptable and nothing matched, so the exchange itself succeeded and the
+        // code in the body says what was found. Every miss is this same answer, status and bytes alike (DIV-4).
         None => (
-            StatusCode::NOT_FOUND,
+            StatusCode::OK,
             IdentifierResponse {
                 response_code: IdentifierQueryCode::NotFound,
                 uris: Vec::new(),
@@ -707,9 +737,11 @@ async fn update_wire(
             error_description: crate::UpdateRefusal::WrongEpoch(current_epoch).to_string(),
             current_epoch,
         },
-        Err(refusal @ crate::UpdateRefusal::Limit(_)) => UpdateRoomResponse::NotAllowed {
-            error_description: refusal.to_string(),
-        },
+        Err(refusal @ (crate::UpdateRefusal::Limit(_) | crate::UpdateRefusal::Policy(_))) => {
+            UpdateRoomResponse::NotAllowed {
+                error_description: refusal.to_string(),
+            }
+        }
         Err(crate::UpdateRefusal::InvalidProposals(why, references)) => {
             UpdateRoomResponse::InvalidProposal {
                 error_description: why.to_string(),
@@ -973,6 +1005,9 @@ mod update_add_tests;
 #[cfg(test)]
 #[path = "http_update_leave_tests.rs"]
 mod update_leave_tests;
+#[cfg(test)]
+#[path = "http_update_role_tests.rs"]
+mod update_role_tests;
 #[cfg(test)]
 #[path = "http_update_tests.rs"]
 mod update_tests;
@@ -2248,7 +2283,8 @@ mod tests {
         let query = |value: &str| {
             IdentifierRequest {
                 query_elements: vec![QueryElement {
-                    search_type: SearchIdentifierType::Handle,
+                    // A bare name is a nick search (§5.8); a handle search takes the whole handle URI.
+                    search_type: SearchIdentifierType::Nick,
                     qualifier: Vec::new(),
                     search_value: value.as_bytes().to_vec(),
                 }],
@@ -2303,8 +2339,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(not_enrolled.status(), StatusCode::NOT_FOUND);
-        assert_eq!(nonexistent.status(), StatusCode::NOT_FOUND);
+        // §5.8: notFound is an accepted request with no match, answered 200 with the code in the body.
+        assert_eq!(not_enrolled.status(), StatusCode::OK);
+        assert_eq!(nonexistent.status(), StatusCode::OK);
         // DIV-4: a user who is not enrolled and one who does not exist get the same bytes, and so does a request
         // this hub cannot decode.
         let not_enrolled = not_enrolled.into_body().collect().await.unwrap().to_bytes();
@@ -2329,7 +2366,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(garbage.status(), StatusCode::NOT_FOUND);
+        assert_eq!(garbage.status(), StatusCode::OK);
         assert_eq!(
             garbage.into_body().collect().await.unwrap().to_bytes(),
             not_enrolled
