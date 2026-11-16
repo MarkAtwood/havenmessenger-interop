@@ -9,8 +9,8 @@ are in [DIVERGENCES.md](DIVERGENCES.md).
 - `notify` refuses an application message, a Commit or a proposal for a room hosted on another hub with 422 and the
   RFC 9457 problem `remote-room-not-delivered`, instead of answering 201 for a message it does not deliver. A Welcome
   is still queued and answered 201.
-- Role 1, the banned role, must be defined in a room's role list before anyone can be banned into it
-  (room-policy #51); only role 0 is always defined.
+- A ban into role 1 is refused unless the room's role list defines role 1 (room-policy #51); a list that names role 1
+  without defining it is still valid.
 - `docs/problems.md` names the problem types mimi-hubd answers with (RFC 9457), starting with
   `remote-room-not-delivered`.
 - Every answer from mimi-hubd carries `Server: mimi-hubd/<version>`.

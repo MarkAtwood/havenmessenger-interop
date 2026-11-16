@@ -385,10 +385,10 @@ Where room-policy-04 leaves a rule open, this is what the hub does. The issues a
 
 - [#33](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/33), rules for a valid role list: a repeated
   `role_index`, a transition that names a role outside the list, and a minimum above its maximum are refused.
-  Only role 0 is always defined: role 1, the banned role, exists only when the list defines it, as
-  [#51](https://github.com/ietf-wg-mimi/mimi-room-policy/pull/51) says ("to use the canBan and canUnban capabilities,
-  a role with role_index = 1 needs to exist"), so a ban, or any change into a role the list does not define, is
-  refused. A capability listed twice counts once. Two `authorized_role_changes`
+  A list may name role 1, the banned role, without defining it: it "does not have to exist"
+  ([#51](https://github.com/ietf-wg-mimi/mimi-room-policy/pull/51)). Banning into it needs it defined ("to use the
+  canBan and canUnban capabilities, a role with role_index = 1 needs to exist"), so a ban into an undefined role 1,
+  or any change into a role the list does not define, is refused while the list itself is accepted. A capability listed twice counts once. Two `authorized_role_changes`
   entries with the same `from_role_index` are both honoured: a change is authorized when any entry permits it.
 - [#31](https://github.com/ietf-wg-mimi/mimi-room-policy/issues/31), when role constraints are checked: the four
   participant-count constraints are read and not kept, so the hub enforces them at no point in a commit.

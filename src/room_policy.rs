@@ -107,10 +107,16 @@ impl RoomPolicy {
         self.roles.iter().find(|r| r.role_index == role_index)
     }
 
-    /// Role 0 (not a participant) is always there. Every other role, the banned role 1 included, exists only when the
-    /// list defines it: room-policy PR #51, "to use the canBan and canUnban capabilities, a role with role_index = 1
-    /// needs to exist".
+    /// What a transition in the list may name: a role the list defines, or a reserved one. Role 1, the banned role,
+    /// "does not have to exist" (room-policy PR #51), so a list may name it without defining it.
     fn role_is_defined_or_reserved(&self, role_index: u32) -> bool {
+        matches!(role_index, ROLE_NON_PARTICIPANT | ROLE_BANNED) || self.role(role_index).is_some()
+    }
+
+    /// What a user can be moved into: out of the room (role 0) or a role the list defines. PR #51: "to use the canBan
+    /// and canUnban capabilities, a role with role_index = 1 needs to exist", so a ban into an undefined role 1 is
+    /// refused even though the list naming it is valid.
+    fn role_can_be_held(&self, role_index: u32) -> bool {
         role_index == ROLE_NON_PARTICIPANT || self.role(role_index).is_some()
     }
 
@@ -198,7 +204,7 @@ impl RoomPolicy {
             .ok_or(RoomPolicyError::ActorRoleUndefined(actor_role_index))?;
         // A user can only be moved into a role the list defines (or out of the room, role 0). This also covers a stored
         // policy accepted before role 1 had to be defined to be used.
-        if !self.role_is_defined_or_reserved(to_role) {
+        if !self.role_can_be_held(to_role) {
             return Err(RoomPolicyError::RoleChangeDenied(format!(
                 "the {from_role}->{to_role} change names role {to_role}, which this room's policy does not define"
             )));
@@ -357,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn p1_validate_rejects_undefined_transition_roles_and_only_role_0_is_always_defined() {
+    fn p1_validate_rejects_undefined_transition_roles_and_a_ban_needs_role_1_defined() {
         let mut undefined_target = sample_policy();
         undefined_target.roles[2].authorized_role_changes[0].target_role_indexes = vec![99];
         assert!(
@@ -398,10 +404,10 @@ mod tests {
             ],
         };
         assert!(
-            founding_shaped.validate().is_err(),
-            "a ban into role 1 needs role 1 defined (room-policy PR #51); only role 0 is always there"
+            founding_shaped.validate().is_ok(),
+            "a list may name role 1 without defining it: the banned role does not have to exist (room-policy PR #51)"
         );
-        // A stored policy accepted before that rule still cannot move anyone into the undefined role.
+        // To ban into it, it has to exist.
         assert!(
             founding_shaped
                 .authorize_role_change(2, 3, ROLE_BANNED)
